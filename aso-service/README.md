@@ -2,9 +2,14 @@
 
 将本地 ASO 扫描脚本服务化：FastAPI 提供 HTTP 接口、MySQL 8.0 持久化、API 密钥鉴权，支持 Docker 一键部署与 n8n 定时调用。
 
+核心业务逻辑在仓库根目录的 **`aso_core`** 包中；本目录仅保留 HTTP 与数据库层。
+
 ## 部署命令
 
+构建上下文为**仓库根目录**（以便打包 `aso_core` 与 `app`）。请在 **`aso-service`** 目录下执行：
+
 ```bash
+cd aso-service
 cp .env.example .env
 # 编辑 .env 填入密码和 API_KEY
 docker compose up -d --build
@@ -12,6 +17,8 @@ docker compose up -d --build
 # 查看启动日志
 docker compose logs -f aso-service
 ```
+
+依赖统一维护在仓库根目录 [`requirements.txt`](../requirements.txt)，镜像构建时从根目录复制该文件。
 
 ## 手动触发一次扫描（测试用）
 
@@ -124,12 +131,15 @@ User Prompt 模板：
 
 ## 本地开发（非 Docker）
 
+在 **`aso-service`** 目录启动，将**仓库根目录**加入 `PYTHONPATH` 以加载 `aso_core`：
+
 ```bash
-cd aso-service
+cd /path/to/aso_opportunities/aso-service
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-export $(grep -v '^#' .env | xargs)
+pip install -r ../requirements.txt
+export PYTHONPATH=..
+export $(grep -v '^#' .env | xargs)  # 或手动 export MySQL 等变量
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 

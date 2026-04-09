@@ -2,7 +2,9 @@ version: "3.8"
 
 services:
   aso-service:
-    build: .
+    build:
+      context: ..
+      dockerfile: aso-service/Dockerfile
     container_name: aso-service
     restart: always
     ports:

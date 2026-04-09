@@ -14,6 +14,9 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from aso_core.scanner import run_full_scan
+from aso_core.scorer import blue_ocean_label, blue_ocean_score
+
 from .auth import verify_api_key
 from .database import (
     create_running_job,
@@ -23,8 +26,6 @@ from .database import (
     insert_keywords,
     update_job,
 )
-from .scanner import run_full_scan
-from .scorer import blue_ocean_label, blue_ocean_score
 
 load_dotenv()
 
