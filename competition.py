@@ -11,6 +11,7 @@
 import math
 import time
 import logging
+from datetime import datetime, timezone
 
 import requests
 
@@ -19,6 +20,21 @@ from config import COUNTRY, ITUNES_LIMIT, RATE_LIMIT_SLEEP
 logger = logging.getLogger(__name__)
 
 ITUNES_URL = "https://itunes.apple.com/search"
+
+
+def _parse_update_age_months(date_str: str) -> int:
+    """
+    将 iTunes API 的 currentVersionReleaseDate 字段转换为距今月数。
+    格式为 "2023-10-15T07:45:10Z"，取前10字符解析日期部分。
+    解析失败时返回 99（视为竞品长期未更新）。
+    """
+    try:
+        release_date = datetime.strptime(date_str[:10], "%Y-%m-%d")
+        today = datetime.now(timezone.utc).replace(tzinfo=None)
+        days = (today - release_date).days
+        return max(int(days / 30), 0)
+    except Exception:
+        return 99
 
 
 def get_competition(
@@ -37,10 +53,13 @@ def get_competition(
         sleep:   请求后等待秒数
 
     返回字段:
-        count        - 实际返回的 App 数量
-        avg_rating   - 样本 App 平均评分
-        avg_reviews  - 样本 App 平均评论数
-        top_reviews  - 第一名 App 的评论数（竞争强度核心指标）
+        count                 - 实际返回的 App 数量
+        avg_rating            - 样本 App 平均评分
+        avg_reviews           - 样本 App 平均评论数
+        top_reviews           - 第一名 App 的评论数（竞争强度核心指标）
+        top_current_reviews   - 第一名 App 当前版本评论数
+        avg_update_age_months - 前10个结果的平均更新距今月数（拿不到日期记为99）
+        concentration         - 第1名评论数 / 前5名评论数之和（分母为0则记0）
     """
     params = {
         "term": keyword,
@@ -54,6 +73,9 @@ def get_competition(
         "avg_rating": 0.0,
         "avg_reviews": 0,
         "top_reviews": 0,
+        "top_current_reviews": 0,
+        "avg_update_age_months": 99,
+        "concentration": 0.0,
     }
 
     try:
@@ -75,11 +97,32 @@ def get_competition(
     ratings = [a.get("averageUserRating", 0.0) for a in apps]
     review_counts = [a.get("userRatingCount", 0) for a in apps]
 
+    # 当前版本评论数（第一名）
+    top_current_reviews = apps[0].get("userRatingCountForCurrentVersion", 0)
+
+    # 前10个结果的平均更新距今月数
+    age_list = [
+        _parse_update_age_months(a["currentVersionReleaseDate"])
+        for a in apps
+        if "currentVersionReleaseDate" in a
+    ]
+    # 拿不到日期的 App 补充 99
+    age_list += [99] * (len(apps) - len(age_list))
+    avg_update_age_months = int(sum(age_list) / len(age_list)) if age_list else 99
+
+    # 市场集中度：第1名 / 前5名评论数之和
+    top5_counts = review_counts[:5]
+    top5_sum = sum(top5_counts)
+    concentration = round(review_counts[0] / top5_sum, 2) if top5_sum > 0 else 0.0
+
     return {
         "count": len(apps),
         "avg_rating": round(sum(ratings) / len(ratings), 2),
         "avg_reviews": int(sum(review_counts) / len(review_counts)),
         "top_reviews": review_counts[0],
+        "top_current_reviews": top_current_reviews,
+        "avg_update_age_months": avg_update_age_months,
+        "concentration": concentration,
     }
 
 
