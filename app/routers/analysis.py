@@ -50,10 +50,21 @@ def analysis_top(
         default=None,
         description="可选，逗号分隔 alpha-2 小写，如 us,gb；不传则包含全部国家",
     ),
+    cross_platform: bool | None = Query(
+        default=None,
+        description="可选，true 时仅返回 Google Play 也有补全的双平台词",
+    ),
+    trends_only: bool | None = Query(
+        default=None,
+        description="可选，true 时仅返回 Google Trends 上升的词",
+    ),
 ) -> dict:
     """按时间窗口拉取高分关键词列表（供 n8n / AI 分析）。"""
     cc = _parse_countries_query(countries)
-    rows = get_top_keywords(label=label, limit=limit, days=days, countries=cc)
+    rows = get_top_keywords(
+        label=label, limit=limit, days=days, countries=cc,
+        cross_platform=cross_platform, trends_only=trends_only,
+    )
     generated = datetime.now(timezone.utc).replace(tzinfo=None).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
@@ -78,6 +89,16 @@ def analysis_top(
                 else None,
                 "rank_change": r.get("rank_change"),
                 "scanned_at": _format_dt(r.get("scanned_at")),
+                "gplay_autocomplete_rank": r.get("gplay_autocomplete_rank"),
+                "gplay_top_reviews": int(r.get("gplay_top_reviews") or 0),
+                "gplay_top_installs": str(r.get("gplay_top_installs") or "0"),
+                "gplay_top_installs_num": int(r.get("gplay_top_installs_num") or 0),
+                "gplay_avg_rating": float(r.get("gplay_avg_rating") or 0),
+                "cross_platform": bool(r.get("cross_platform")),
+                "trends_rising": bool(r.get("trends_rising")),
+                "trends_rising_count": int(r.get("trends_rising_count") or 0),
+                "reddit_post_count": int(r.get("reddit_post_count") or 0),
+                "reddit_avg_score": float(r.get("reddit_avg_score") or 0),
             }
         )
     return {

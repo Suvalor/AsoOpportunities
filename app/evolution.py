@@ -63,6 +63,8 @@ def evaluate_seed_performance(batch_id: str) -> None:
                 "avg_blue_ocean_score": float(r["avg_blue_ocean_score"] or 0),
                 "max_blue_ocean_score": int(r["max_blue_ocean_score"] or 0),
                 "strong_count": int(r["strong_count"] or 0),
+                "cross_platform_ratio": round(float(r.get("cross_platform_ratio") or 0), 3),
+                "trends_ratio": round(float(r.get("trends_ratio") or 0), 3),
             }
             for r in rows
         ],
@@ -190,7 +192,9 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
     for r in top_rows:
         lines.append(
             f"- keyword={r.get('keyword')} score={r.get('blue_ocean_score')} "
-            f"seed={r.get('seed')} flags={r.get('blue_ocean_flags')}"
+            f"seed={r.get('seed')} flags={r.get('blue_ocean_flags')} "
+            f"cross_platform={r.get('cross_platform', 0)} "
+            f"trends_rising={r.get('trends_rising', 0)}"
         )
     user_prompt = (
         "你是 ASO 关键词研究助手。根据下列高蓝海分关键词，提出 "

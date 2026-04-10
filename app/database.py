@@ -47,6 +47,29 @@ def bootstrap_default_seeds_if_empty() -> None:
             conn.close()
 
 
+def _add_column_if_not_exists(
+    conn: pymysql.connections.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    """若列不存在则 ALTER TABLE ADD COLUMN（MySQL 8.0 兼容）。"""
+    check_sql = """
+        SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = %s
+        AND COLUMN_NAME = %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(check_sql, (table, column))
+        row = cur.fetchone()
+        if row and int(row["c"]) == 0:
+            cur.execute(
+                f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}"
+            )
+    conn.commit()
+
+
 def _get_connection() -> pymysql.connections.Connection:
     """创建单次使用的数据库连接（无连接池）。"""
     return pymysql.connect(
@@ -147,6 +170,22 @@ def init_db() -> None:
             cur.execute(sql_seeds)
             cur.execute(sql_evolution_log)
         conn.commit()
+
+        _new_columns = [
+            ("gplay_autocomplete_rank", "INT DEFAULT NULL"),
+            ("gplay_top_reviews", "INT DEFAULT 0"),
+            ("gplay_top_installs", "VARCHAR(50) DEFAULT '0'"),
+            ("gplay_top_installs_num", "INT DEFAULT 0"),
+            ("gplay_avg_rating", "FLOAT DEFAULT 0"),
+            ("cross_platform", "TINYINT(1) DEFAULT 0"),
+            ("trends_rising", "TINYINT(1) DEFAULT 0"),
+            ("trends_rising_count", "INT DEFAULT 0"),
+            ("reddit_post_count", "INT DEFAULT 0"),
+            ("reddit_avg_score", "FLOAT DEFAULT 0"),
+        ]
+        for col_name, col_def in _new_columns:
+            _add_column_if_not_exists(conn, "aso_keywords", col_name, col_def)
+
         bootstrap_default_seeds_if_empty()
     except Exception as exc:
         logger.error("init_db 失败: %s", exc)
@@ -226,9 +265,13 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
       keyword, seed, country, autocomplete_rank, top_reviews, avg_reviews,
       top_current_reviews, avg_update_age_months, concentration, seed_coverage,
       trend_gap, rank_change, opportunity_score, blue_ocean_score, blue_ocean_flags,
-      blue_ocean_label, scanned_at, scan_batch_id
+      blue_ocean_label, scanned_at, scan_batch_id,
+      gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
+      gplay_top_installs_num, gplay_avg_rating, cross_platform,
+      trends_rising, trends_rising_count, reddit_post_count, reddit_avg_score
     ) VALUES (
-      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
     )
     """
     tuples: list[tuple] = []
@@ -255,6 +298,16 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
                 (r.get("blue_ocean_label") or "")[:20],
                 scanned_at,
                 batch_id,
+                r.get("gplay_autocomplete_rank"),
+                int(r.get("gplay_top_reviews") or 0),
+                str(r.get("gplay_top_installs") or "0")[:50],
+                int(r.get("gplay_top_installs_num") or 0),
+                float(r.get("gplay_avg_rating") or 0),
+                1 if r.get("cross_platform") else 0,
+                1 if r.get("trends_rising") else 0,
+                int(r.get("trends_rising_count") or 0),
+                int(r.get("reddit_post_count") or 0),
+                float(r.get("reddit_avg_score") or 0),
             )
         )
 
@@ -297,10 +350,13 @@ def get_top_keywords(
     limit: int = 50,
     days: int = 7,
     countries: list[str] | None = None,
+    cross_platform: bool | None = None,
+    trends_only: bool | None = None,
 ) -> list[dict]:
     """
     按时间窗口与可选标签、可选国家列表筛选，按 blue_ocean_score 降序返回关键词摘要。
     countries 为 None 时不过滤国家；传入时仅保留 country IN (...) 的行。
+    cross_platform=True 时仅返回双平台词；trends_only=True 时仅返回 Trends 上升词。
     limit 最大 200。
     """
     limit = min(max(limit, 1), 200)
@@ -323,12 +379,20 @@ def get_top_keywords(
                 ph = ",".join(["%s"] * len(cc_list))
                 where_extra += f" AND country IN ({ph})"
                 params.extend(cc_list)
+            if cross_platform is True:
+                where_extra += " AND cross_platform = 1"
+            if trends_only is True:
+                where_extra += " AND trends_rising = 1"
             params.append(limit)
 
             sql = f"""
                     SELECT keyword, country, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
                            top_reviews, concentration, avg_update_age_months,
-                           trend_gap, rank_change, scanned_at
+                           trend_gap, rank_change, scanned_at,
+                           gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
+                           gplay_top_installs_num, gplay_avg_rating, cross_platform,
+                           trends_rising, trends_rising_count,
+                           reddit_post_count, reddit_avg_score
                     FROM aso_keywords
                     WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
                       {where_extra}
@@ -446,7 +510,9 @@ def get_seed_performance_by_batch(batch_id: str) -> list[dict]:
                   COUNT(*) AS keyword_count,
                   AVG(blue_ocean_score) AS avg_blue_ocean_score,
                   MAX(blue_ocean_score) AS max_blue_ocean_score,
-                  SUM(CASE WHEN blue_ocean_score >= 60 THEN 1 ELSE 0 END) AS strong_count
+                  SUM(CASE WHEN blue_ocean_score >= 60 THEN 1 ELSE 0 END) AS strong_count,
+                  AVG(CASE WHEN cross_platform = 1 THEN 1.0 ELSE 0 END) AS cross_platform_ratio,
+                  AVG(CASE WHEN trends_rising = 1 THEN 1.0 ELSE 0 END) AS trends_ratio
                 FROM aso_keywords
                 WHERE scan_batch_id = %s
                   AND seed IS NOT NULL AND seed != ''
@@ -586,7 +652,8 @@ def get_top_keywords_for_batch(batch_id: str, limit: int) -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT keyword, blue_ocean_score, seed, blue_ocean_flags
+                SELECT keyword, blue_ocean_score, seed, blue_ocean_flags,
+                       cross_platform, trends_rising
                 FROM aso_keywords
                 WHERE scan_batch_id = %s
                 ORDER BY blue_ocean_score DESC
@@ -725,14 +792,22 @@ def get_compare_analysis(
                 recent_scoped AS (
                   SELECT keyword, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
                          top_reviews, concentration, avg_update_age_months,
-                         trend_gap, rank_change, scanned_at
+                         trend_gap, rank_change, scanned_at,
+                         gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
+                         gplay_top_installs_num, gplay_avg_rating, cross_platform,
+                         trends_rising, trends_rising_count,
+                         reddit_post_count, reddit_avg_score
                   FROM aso_keywords
                   WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
                 ),
                 recent_latest AS (
                   SELECT keyword, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
                          top_reviews, concentration, avg_update_age_months,
-                         trend_gap, rank_change, scanned_at
+                         trend_gap, rank_change, scanned_at,
+                         gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
+                         gplay_top_installs_num, gplay_avg_rating, cross_platform,
+                         trends_rising, trends_rising_count,
+                         reddit_post_count, reddit_avg_score
                   FROM (
                     SELECT *, ROW_NUMBER() OVER (
                       PARTITION BY keyword ORDER BY scanned_at DESC
@@ -766,6 +841,16 @@ def get_compare_analysis(
                   rl.trend_gap,
                   rl.rank_change,
                   rl.scanned_at,
+                  rl.gplay_autocomplete_rank,
+                  rl.gplay_top_reviews,
+                  rl.gplay_top_installs,
+                  rl.gplay_top_installs_num,
+                  rl.gplay_avg_rating,
+                  rl.cross_platform,
+                  rl.trends_rising,
+                  rl.trends_rising_count,
+                  rl.reddit_post_count,
+                  rl.reddit_avg_score,
                   lg.lag_baseline_score,
                   CASE
                     WHEN lg.lag_baseline_score IS NULL THEN rl.blue_ocean_score
@@ -802,6 +887,16 @@ def get_compare_analysis(
                 "trend_gap": r.get("trend_gap"),
                 "rank_change": r.get("rank_change"),
                 "scanned_at": r.get("scanned_at"),
+                "gplay_autocomplete_rank": r.get("gplay_autocomplete_rank"),
+                "gplay_top_reviews": r.get("gplay_top_reviews"),
+                "gplay_top_installs": r.get("gplay_top_installs"),
+                "gplay_top_installs_num": r.get("gplay_top_installs_num"),
+                "gplay_avg_rating": r.get("gplay_avg_rating"),
+                "cross_platform": r.get("cross_platform"),
+                "trends_rising": r.get("trends_rising"),
+                "trends_rising_count": r.get("trends_rising_count"),
+                "reddit_post_count": r.get("reddit_post_count"),
+                "reddit_avg_score": r.get("reddit_avg_score"),
             }
             item = _compare_row_dict(base_row, delta)
             if lag_bs is None:
@@ -849,4 +944,14 @@ def _compare_row_dict(row: dict, score_delta: int) -> dict:
         if hasattr(row.get("scanned_at"), "strftime")
         else str(row.get("scanned_at") or ""),
         "score_delta": score_delta,
+        "gplay_autocomplete_rank": row.get("gplay_autocomplete_rank"),
+        "gplay_top_reviews": int(row.get("gplay_top_reviews") or 0),
+        "gplay_top_installs": str(row.get("gplay_top_installs") or "0"),
+        "gplay_top_installs_num": int(row.get("gplay_top_installs_num") or 0),
+        "gplay_avg_rating": float(row.get("gplay_avg_rating") or 0),
+        "cross_platform": bool(row.get("cross_platform")),
+        "trends_rising": bool(row.get("trends_rising")),
+        "trends_rising_count": int(row.get("trends_rising_count") or 0),
+        "reddit_post_count": int(row.get("reddit_post_count") or 0),
+        "reddit_avg_score": float(row.get("reddit_avg_score") or 0),
     }

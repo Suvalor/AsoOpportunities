@@ -53,6 +53,15 @@ OUTPUT_FIELDS = [
     "blue_ocean_score",
     "blue_ocean_flags",
     "blue_ocean_label",
+    "gplay_autocomplete_rank",
+    "gplay_top_reviews",
+    "gplay_top_installs",
+    "gplay_top_installs_num",
+    "cross_platform",
+    "trends_rising",
+    "trends_rising_count",
+    "reddit_post_count",
+    "reddit_avg_score",
 ]
 
 

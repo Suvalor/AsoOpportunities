@@ -7,9 +7,11 @@ def blue_ocean_score(record: dict) -> tuple[int, str]:
     """
     输入一条 result 字典，返回 (score, flags_str)。
 
-    评分规则（满分 110 分）：
+    评分规则（满分约 150 分）：
       搜索量真实性（最高30分）
-      趋势与竞争强度等见代码分支。
+      竞争强度（最高50分）
+      趋势信号（最高20分）
+      新增维度：跨平台/Trends/Reddit/安装量修正（最高+40/-20分）
     """
     score = 0
     flags: list[str] = []
@@ -52,6 +54,26 @@ def blue_ocean_score(record: dict) -> tuple[int, str]:
     if rank_change > 2:
         score += 10
         flags.append("排名上升")
+
+    if record.get("cross_platform"):
+        score += 15
+        flags.append("📱 双平台需求")
+
+    if record.get("trends_rising"):
+        score += 15
+        flags.append("📈 Google趋势上升")
+
+    if record.get("reddit_post_count", 0) >= 5:
+        score += 10
+        flags.append("💬 Reddit有需求讨论")
+
+    installs = record.get("gplay_top_installs_num", 0)
+    if installs > 1_000_000:
+        score -= 20
+        flags.append("🔴 Android头部安装量过高")
+    elif installs > 0 and installs < 10_000:
+        score += 10
+        flags.append("💎 Android竞争极弱")
 
     return score, " | ".join(flags)
 

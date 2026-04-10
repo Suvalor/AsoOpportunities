@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,8 +20,13 @@ from .autocomplete import get_autocomplete
 from .competition import get_competition, opportunity_score
 from .config_data import SEEDS
 from .settings import get_settings
+from . import gplay, trends, reddit_signals
 
 logger = logging.getLogger(__name__)
+
+ENABLE_GPLAY = os.getenv("ENABLE_GPLAY", "true").lower() == "true"
+ENABLE_TRENDS = os.getenv("ENABLE_TRENDS", "true").lower() == "true"
+ENABLE_REDDIT = os.getenv("ENABLE_REDDIT", "false").lower() == "true"
 
 # 模块级国家配置（可被环境变量覆盖）
 PRIMARY_COUNTRY = os.getenv("ASO_PRIMARY_COUNTRY", "us").strip().lower() or "us"
@@ -244,6 +250,55 @@ def _scan_single_country(
             r["autocomplete_rank"],
             country,
         )
+
+    # --- 新数据源丰富（在 Apple 数据采集完成后追加）---
+    rate_sleep = float(os.getenv("RATE_LIMIT_SLEEP", "0.5"))
+
+    gplay_cache: dict[str, list[tuple]] = {}
+    if ENABLE_GPLAY:
+        unique_seeds = {r["seed"] for r in results if r.get("seed")}
+        for s in tqdm(unique_seeds, desc=f"gplay_auto[{country}]", unit="seed"):
+            gplay_cache[s] = gplay.get_gplay_autocomplete(s, country=country)
+            time.sleep(rate_sleep)
+
+    for r in tqdm(results, desc=f"enrich[{country}]", unit="kw"):
+        if ENABLE_GPLAY:
+            completions = gplay_cache.get(r.get("seed", ""), [])
+            gplay_rank = next(
+                (rk for w, rk in completions if w == r["keyword"]), None
+            )
+            gplay_comp = gplay.get_gplay_competition(r["keyword"], country=country)
+            r["gplay_autocomplete_rank"] = gplay_rank
+            r["gplay_top_reviews"] = gplay_comp.get("top_reviews", 0)
+            r["gplay_top_installs"] = gplay_comp.get("top_installs", "0")
+            r["gplay_top_installs_num"] = gplay_comp.get("top_installs_num", 0)
+            r["gplay_avg_rating"] = gplay_comp.get("avg_rating", 0)
+            r["cross_platform"] = gplay_rank is not None
+            time.sleep(rate_sleep)
+        else:
+            r["gplay_autocomplete_rank"] = None
+            r["gplay_top_reviews"] = 0
+            r["gplay_top_installs"] = "0"
+            r["gplay_top_installs_num"] = 0
+            r["gplay_avg_rating"] = 0
+            r["cross_platform"] = False
+
+        if ENABLE_TRENDS and r.get("autocomplete_rank", 99) <= 10:
+            geo = country.upper()
+            rising = trends.get_trends_rising_queries(r["keyword"], geo=geo)
+            r["trends_rising"] = trends.keyword_in_rising(r["keyword"], rising)
+            r["trends_rising_count"] = len(rising)
+        else:
+            r["trends_rising"] = False
+            r["trends_rising_count"] = 0
+
+        if ENABLE_REDDIT and mode == "full":
+            reddit_data = reddit_signals.get_reddit_demand_signal(r["keyword"])
+            r["reddit_post_count"] = reddit_data.get("post_count", 0)
+            r["reddit_avg_score"] = reddit_data.get("avg_score", 0)
+        else:
+            r["reddit_post_count"] = 0
+            r["reddit_avg_score"] = 0
 
     return results
 
