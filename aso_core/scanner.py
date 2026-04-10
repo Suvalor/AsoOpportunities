@@ -138,7 +138,7 @@ def run_full_scan(
     遍历种子词或追踪词列表，去重后返回结果列表（不含蓝海分字段）。
 
     :param country: 主市场；None 时使用 settings.default_country
-    :param seeds: full 模式下为 None 时用 SEEDS；tracking 模式下为待刷新的关键词列表（必填）
+    :param seeds: 为 None 且 mode=full 时用内置 SEEDS（CLI）；服务侧应传入 DB 查询得到的种子列表
     :param rank_history_path: 排名历史文件路径；None 时使用 settings.rank_history_path
     :param mode: ``full`` 为完整种子矩阵；``tracking`` 仅刷新传入的关键词（逐词查补全位次与竞争）
     """
@@ -149,12 +149,10 @@ def run_full_scan(
     if mode not in ("full", "tracking"):
         mode = "full"
 
-    if mode == "tracking":
-        if not seeds:
-            logger.warning("tracking 模式未提供关键词列表，跳过扫描。")
+    if not seeds:
+        if mode == "tracking":
+            logger.warning("tracking 模式未提供种子列表，跳过扫描。")
             return []
-        seed_list = list(seeds)
-    elif seeds is None:
         seed_list = list(SEEDS)
     else:
         seed_list = list(seeds)
@@ -167,30 +165,20 @@ def run_full_scan(
     best: dict[str, dict] = {}
     keyword_seeds: dict[str, set] = defaultdict(set)
 
-    if mode == "tracking":
-        for keyword in tqdm(seed_list, desc="追踪关键词", unit="kw"):
-            completions = get_autocomplete(keyword, country=country)
-            rank = next(
-                (r for kw, r in completions if kw.lower() == keyword.lower()),
-                None,
-            )
-            if rank is None:
-                rank = 21
-            _ingest_record(best, keyword_seeds, keyword, keyword, rank, country)
-    else:
-        for seed in tqdm(seed_list, desc="种子词", unit="seed"):
-            completions = get_autocomplete(seed, country=country)
-            if not completions:
-                logger.debug("种子词 [%s] 无补全结果，跳过", seed)
-                continue
+    desc = "追踪种子" if mode == "tracking" else "种子词"
+    for seed in tqdm(seed_list, desc=desc, unit="seed"):
+        completions = get_autocomplete(seed, country=country)
+        if not completions:
+            logger.debug("种子词 [%s] 无补全结果，跳过", seed)
+            continue
 
-            for keyword, rank in tqdm(
-                completions,
-                desc=f"  {seed}",
-                unit="kw",
-                leave=False,
-            ):
-                _ingest_record(best, keyword_seeds, seed, keyword, rank, country)
+        for keyword, rank in tqdm(
+            completions,
+            desc=f"  {seed}",
+            unit="kw",
+            leave=False,
+        ):
+            _ingest_record(best, keyword_seeds, seed, keyword, rank, country)
 
     if not best:
         logger.warning("没有找到任何关键词，请检查网络连接或种子词配置。")

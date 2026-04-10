@@ -4,6 +4,7 @@ MySQL 8.0 持久化：建表、任务状态、关键词批量写入、查询。
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -13,6 +14,37 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 logger = logging.getLogger(__name__)
+
+
+def bootstrap_default_seeds_if_empty() -> None:
+    """
+    若 aso_seeds 为空，将 aso_core.config_data.SEEDS 批量写入，
+    status=active，source=manual，generation=0。
+    """
+    from aso_core.config_data import SEEDS as CORE_SEEDS
+
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM aso_seeds")
+            row = cur.fetchone()
+            if row and int(row["c"]) > 0:
+                return
+            sql = """
+            INSERT IGNORE INTO aso_seeds
+              (seed, status, source, generation, created_at, updated_at)
+            VALUES (%s, 'active', 'manual', 0, NOW(), NOW())
+            """
+            cur.executemany(sql, [(s,) for s in CORE_SEEDS])
+        conn.commit()
+        logger.info("已初始化 aso_seeds，共 %d 条默认种子", len(CORE_SEEDS))
+    except Exception as exc:
+        logger.error("bootstrap_default_seeds_if_empty 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _get_connection() -> pymysql.connections.Connection:
@@ -76,13 +108,46 @@ def init_db() -> None:
       DEFAULT CHARSET=utf8mb4
       COLLATE=utf8mb4_unicode_ci
     """
+    sql_seeds = """
+    CREATE TABLE IF NOT EXISTS aso_seeds (
+      id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      seed        VARCHAR(255) NOT NULL,
+      status      ENUM('active','pending','pruned') NOT NULL DEFAULT 'pending',
+      source      VARCHAR(32)  NOT NULL DEFAULT 'manual',
+      generation  INT UNSIGNED NOT NULL DEFAULT 0,
+      created_at  DATETIME     NOT NULL,
+      updated_at  DATETIME     NOT NULL,
+      UNIQUE KEY uk_seed (seed),
+      INDEX idx_status (status),
+      INDEX idx_generation (generation)
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4
+      COLLATE=utf8mb4_unicode_ci
+    """
+    sql_evolution_log = """
+    CREATE TABLE IF NOT EXISTS aso_seed_evolution_log (
+      id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      batch_id   VARCHAR(36),
+      event_type VARCHAR(64) NOT NULL,
+      payload    JSON,
+      created_at DATETIME    NOT NULL,
+      INDEX idx_batch (batch_id),
+      INDEX idx_created (created_at DESC),
+      INDEX idx_event (event_type)
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4
+      COLLATE=utf8mb4_unicode_ci
+    """
     conn = None
     try:
         conn = _get_connection()
         with conn.cursor() as cur:
             cur.execute(sql_keywords)
             cur.execute(sql_jobs)
+            cur.execute(sql_seeds)
+            cur.execute(sql_evolution_log)
         conn.commit()
+        bootstrap_default_seeds_if_empty()
     except Exception as exc:
         logger.error("init_db 失败: %s", exc)
         raise
@@ -274,10 +339,32 @@ def get_top_keywords(
             conn.close()
 
 
-def get_tracked_keywords(min_score: int) -> list[str]:
+def get_active_seeds() -> list[str]:
+    """返回 status=active 的种子短语列表（有序）。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT seed FROM aso_seeds
+                WHERE status = 'active'
+                ORDER BY seed
+                """
+            )
+            return [str(r["seed"]) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_active_seeds 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_tracking_scan_seeds(min_score: int, days: int = 30) -> list[str]:
     """
-    返回「每个关键词最新一条扫描记录中蓝海分 >= min_score」的去重关键词列表（按 keyword 排序）。
-    使用 ROW_NUMBER 按 keyword 分区、按 scanned_at 降序取最新一行。
+    追踪扫描用：active 种子中，在最近 days 天内 aso_keywords 曾出现
+    blue_ocean_score >= min_score 的 seed（去重）。
     """
     conn = None
     try:
@@ -285,25 +372,306 @@ def get_tracked_keywords(min_score: int) -> list[str]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                WITH latest AS (
-                  SELECT keyword,
-                         blue_ocean_score,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY keyword ORDER BY scanned_at DESC
-                         ) AS rn
-                  FROM aso_keywords
-                )
-                SELECT keyword
-                FROM latest
-                WHERE rn = 1 AND blue_ocean_score >= %s
-                ORDER BY keyword
+                SELECT s.seed
+                FROM aso_seeds s
+                WHERE s.status = 'active'
+                  AND s.seed IN (
+                    SELECT DISTINCT k.seed
+                    FROM aso_keywords k
+                    WHERE k.blue_ocean_score >= %s
+                      AND k.scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                      AND k.seed IS NOT NULL
+                      AND k.seed != ''
+                  )
+                ORDER BY s.seed
                 """,
-                (min_score,),
+                (min_score, days),
             )
-            rows = cur.fetchall()
-            return [str(r["keyword"]) for r in rows]
+            return [str(r["seed"]) for r in cur.fetchall()]
     except Exception as exc:
-        logger.error("get_tracked_keywords 失败: %s", exc)
+        logger.error("get_tracking_scan_seeds 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def append_evolution_log(
+    batch_id: str | None,
+    event_type: str,
+    payload: dict | None = None,
+) -> None:
+    """进化日志只追加。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_seed_evolution_log (batch_id, event_type, payload, created_at)
+                VALUES (%s, %s, %s, NOW())
+                """,
+                (
+                    batch_id,
+                    event_type,
+                    json.dumps(payload, ensure_ascii=False) if payload else None,
+                ),
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.error("append_evolution_log 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_seed_performance_by_batch(batch_id: str) -> list[dict]:
+    """按 seed 聚合本批次关键词表现。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  seed,
+                  COUNT(*) AS keyword_count,
+                  AVG(blue_ocean_score) AS avg_blue_ocean_score,
+                  MAX(blue_ocean_score) AS max_blue_ocean_score,
+                  SUM(CASE WHEN blue_ocean_score >= 60 THEN 1 ELSE 0 END) AS strong_count
+                FROM aso_keywords
+                WHERE scan_batch_id = %s
+                  AND seed IS NOT NULL AND seed != ''
+                GROUP BY seed
+                """,
+                (batch_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_seed_performance_by_batch 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def set_seeds_pruned(seed_list: list[str]) -> None:
+    """将给定 seed 标记为 pruned。"""
+    if not seed_list:
+        return
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            placeholders = ",".join(["%s"] * len(seed_list))
+            cur.execute(
+                f"""
+                UPDATE aso_seeds
+                SET status = 'pruned', updated_at = NOW()
+                WHERE seed IN ({placeholders}) AND status = 'active'
+                """,
+                tuple(seed_list),
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.error("set_seeds_pruned 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_pending_seeds(seeds: list[str], generation: int, source: str = "generated") -> None:
+    """插入待验证种子（pending）；已存在则忽略。"""
+    if not seeds:
+        return
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            sql = """
+            INSERT IGNORE INTO aso_seeds
+              (seed, status, source, generation, created_at, updated_at)
+            VALUES (%s, 'pending', %s, %s, NOW(), NOW())
+            """
+            cur.executemany(
+                sql,
+                [(s.strip(), source, generation) for s in seeds if s.strip()],
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.error("insert_pending_seeds 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def fetch_pending_seeds_ordered(limit: int = 100) -> list[str]:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT seed FROM aso_seeds
+                WHERE status = 'pending'
+                ORDER BY created_at ASC, id ASC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            return [str(r["seed"]) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("fetch_pending_seeds_ordered 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def activate_seed(seed: str) -> bool:
+    """将 pending 转为 active；返回是否更新成功。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE aso_seeds
+                SET status = 'active', updated_at = NOW()
+                WHERE seed = %s AND status = 'pending'
+                """,
+                (seed,),
+            )
+            ok = cur.rowcount > 0
+        conn.commit()
+        return ok
+    except Exception as exc:
+        logger.error("activate_seed 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def max_seed_generation() -> int:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(MAX(generation), 0) AS m FROM aso_seeds")
+            row = cur.fetchone()
+            return int(row["m"] or 0)
+    except Exception as exc:
+        logger.error("max_seed_generation 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_top_keywords_for_batch(batch_id: str, limit: int) -> list[dict]:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT keyword, blue_ocean_score, seed, blue_ocean_flags
+                FROM aso_keywords
+                WHERE scan_batch_id = %s
+                ORDER BY blue_ocean_score DESC
+                LIMIT %s
+                """,
+                (batch_id, limit),
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_top_keywords_for_batch 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_seeds_status_snapshot() -> dict:
+    """供 GET /seeds/status 的快照数据。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT status, COUNT(*) AS c FROM aso_seeds GROUP BY status
+                """
+            )
+            counts = {str(r["status"]): int(r["c"]) for r in cur.fetchall()}
+            cur.execute("SELECT COALESCE(MAX(generation), 0) AS m FROM aso_seeds")
+            max_gen = int(cur.fetchone()["m"] or 0)
+            cur.execute(
+                """
+                SELECT seed, status, source, generation, created_at, updated_at
+                FROM aso_seeds
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT 30
+                """
+            )
+            pending_preview = []
+            for r in cur.fetchall():
+                pending_preview.append(
+                    {
+                        "seed": r["seed"],
+                        "status": r["status"],
+                        "source": r["source"],
+                        "generation": int(r["generation"] or 0),
+                        "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r["created_at"], "strftime")
+                        else str(r["created_at"]),
+                        "updated_at": r["updated_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r["updated_at"], "strftime")
+                        else str(r["updated_at"]),
+                    }
+                )
+            cur.execute(
+                """
+                SELECT id, batch_id, event_type, payload, created_at
+                FROM aso_seed_evolution_log
+                ORDER BY id DESC
+                LIMIT 25
+                """
+            )
+            recent_events = []
+            for r in cur.fetchall():
+                pl = r.get("payload")
+                if isinstance(pl, str):
+                    try:
+                        pl = json.loads(pl)
+                    except json.JSONDecodeError:
+                        pass
+                recent_events.append(
+                    {
+                        "id": int(r["id"]),
+                        "batch_id": r.get("batch_id"),
+                        "event_type": r["event_type"],
+                        "payload": pl,
+                        "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r["created_at"], "strftime")
+                        else str(r["created_at"]),
+                    }
+                )
+        return {
+            "active_count": int(counts.get("active", 0)),
+            "pending_count": int(counts.get("pending", 0)),
+            "pruned_count": int(counts.get("pruned", 0)),
+            "max_generation": max_gen,
+            "pending_preview": pending_preview,
+            "recent_evolution_events": recent_events,
+        }
+    except Exception as exc:
+        logger.error("get_seeds_status_snapshot 失败: %s", exc)
         raise
     finally:
         if conn is not None:

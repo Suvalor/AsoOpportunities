@@ -20,14 +20,17 @@ from aso_core.scorer import blue_ocean_label, blue_ocean_score
 from .auth import verify_api_key
 from .database import (
     create_running_job,
+    get_active_seeds,
     get_compare_analysis,
     get_job,
+    get_seeds_status_snapshot,
     get_top_keywords,
-    get_tracked_keywords,
+    get_tracking_scan_seeds,
     init_db,
     insert_keywords,
     update_job,
 )
+from .evolution import run_evolution_after_full_scan
 
 load_dotenv()
 
@@ -38,8 +41,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 与 database.get_tracked_keywords 及 README 中「追踪模式」说明保持一致
+# 与 get_tracking_scan_seeds 子查询及 README 中「追踪模式」说明保持一致
 TRACKING_MIN_BLUE_SCORE = 60
+TRACKING_SEED_LOOKBACK_DAYS = 30
 
 app = FastAPI(title="ASO 蓝海关键词服务", version="1.0.0")
 
@@ -67,10 +71,12 @@ def _run_scan_background(
     """后台线程：扫描（full / tracking）→ 蓝海评分 → 入库 → 更新任务状态。"""
     try:
         if mode == "tracking":
-            seeds = get_tracked_keywords(TRACKING_MIN_BLUE_SCORE)
+            seeds = get_tracking_scan_seeds(
+                TRACKING_MIN_BLUE_SCORE, days=TRACKING_SEED_LOOKBACK_DAYS
+            )
             if not seeds:
                 logger.info(
-                    "tracking 模式：无 blue_ocean_score>=60 的关键词，batch_id=%s",
+                    "tracking 模式：无符合条件的 active 种子 batch_id=%s",
                     batch_id,
                 )
                 insert_keywords([], batch_id, country)
@@ -80,13 +86,21 @@ def _run_scan_background(
                 country=country, seeds=seeds, mode="tracking"
             )
         else:
-            results = run_full_scan(country=country, seeds=None, mode="full")
+            seeds = get_active_seeds()
+            if not seeds:
+                logger.warning(
+                    "full 模式：aso_seeds 无 active 种子，batch_id=%s",
+                    batch_id,
+                )
+            results = run_full_scan(country=country, seeds=seeds, mode="full")
         for r in results:
             score, flags = blue_ocean_score(r)
             r["blue_ocean_score"] = score
             r["blue_ocean_flags"] = flags
             r["blue_ocean_label"] = blue_ocean_label(score)
         insert_keywords(results, batch_id, country)
+        if mode == "full":
+            run_evolution_after_full_scan(batch_id)
         update_job(batch_id, "done", total=len(results))
         logger.info("扫描任务完成 batch_id=%s 关键词数=%d", batch_id, len(results))
     except Exception as exc:
@@ -104,7 +118,10 @@ class ScanStartBody(BaseModel):
     country: str = Field(default="us", description="主市场区域代码")
     mode: Literal["full", "tracking"] = Field(
         default="full",
-        description="full=完整种子矩阵；tracking=仅刷新库中蓝海分≥60的关键词",
+        description=(
+            "full=从 aso_seeds active 取种子做矩阵扫描并在写库后执行进化；"
+            "tracking=仅对近30天曾出现蓝海分≥60 的 active 种子重复展开扫描"
+        ),
     )
 
 
@@ -112,6 +129,16 @@ class ScanStartBody(BaseModel):
 def health() -> dict:
     """健康检查（无需鉴权）。"""
     return {"status": "ok"}
+
+
+@app.get("/seeds/status")
+def seeds_status(_: Annotated[None, Depends(verify_api_key)]) -> dict:
+    """返回种子矩阵与进化日志快照（需鉴权）。"""
+    snap = get_seeds_status_snapshot()
+    generated = datetime.now(timezone.utc).replace(tzinfo=None).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    return {"generated_at": generated, **snap}
 
 
 @app.post("/scan/start")
