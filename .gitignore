@@ -1,4 +1,26 @@
-.env
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 .venv/
+venv/
+*.egg-info/
+
+# 环境变量
+.env
+
+# 运行时数据
+rank_history.json
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.override.yml
