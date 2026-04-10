@@ -4,7 +4,7 @@ ASO 蓝海关键词分析系统 — CLI 入口
 用法:
     python main.py               # 完整跑所有 240 个种子词（约 40 分钟）
     python main.py --seeds 20    # 只跑前 N 个种子（测试用）
-    python main.py --country gb  # 指定主市场区域
+    python main.py --country gb  # 仅扫描该国（覆盖 ASO_SCAN_COUNTRIES）
     python main.py --out results.csv  # 自定义输出文件名
 
 配置优先级见 aso_core.settings；本地可在仓库根目录放置 .env 或 config.json。
@@ -35,6 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 OUTPUT_FIELDS = [
+    "country",
     "seed",
     "keyword",
     "autocomplete_rank",
@@ -88,7 +89,8 @@ def _print_summary(results: list[dict], history_saved: bool) -> None:
 
 def run_cli(seeds_subset: list[str] | None, country: str | None, out_path: Path) -> None:
     """执行扫描、蓝海评分、写 CSV。"""
-    results = run_full_scan(country=country, seeds=seeds_subset)
+    scan_countries = [country] if country else None
+    results = run_full_scan(countries=scan_countries, seeds=seeds_subset)
     if not results:
         logger.warning("没有找到任何关键词，请检查网络连接或种子词配置。")
         return
@@ -132,7 +134,7 @@ def main() -> None:
         type=str,
         default=None,
         metavar="CODE",
-        help="主市场区域代码；默认来自环境变量 / .env / config.json（见 aso_core.settings）",
+        help="仅扫描单个区域；不指定则使用环境变量 ASO_SCAN_COUNTRIES（见 aso_core.scanner）",
     )
     parser.add_argument(
         "--out",

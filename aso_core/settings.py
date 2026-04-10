@@ -4,7 +4,8 @@
 优先级（后者覆盖前者）：
   1. 代码内默认值
   2. 可选 config.json（路径由 ASO_CONFIG_JSON 指定，默认 ./config.json）浅层合并
-  3. 环境变量（含 .env 通过 load_dotenv 注入，且不覆盖已存在的环境变量）
+  3. 环境变量（含 .env 通过 load_dotenv 注入，且不覆盖已存在的环境变量）。
+     主市场由 ASO_PRIMARY_COUNTRY 指定（扫描国家列表见 aso_core.scanner.SCAN_COUNTRIES）。
 
 说明：种子词列表 SEEDS 仅在 config_data 中维护，不由 json 覆盖。
 """
@@ -55,7 +56,8 @@ def get_settings() -> Settings:
     }
     merged = {**defaults, **_json_overrides()}
 
-    country = os.getenv("ASO_DEFAULT_COUNTRY") or os.getenv("COUNTRY")
+    # 主市场：与 ASO_PRIMARY_COUNTRY 一致；兼容旧环境变量 COUNTRY
+    country = os.getenv("ASO_PRIMARY_COUNTRY") or os.getenv("COUNTRY")
     if country is None:
         country = str(merged.get("default_country") or defaults["default_country"])
 

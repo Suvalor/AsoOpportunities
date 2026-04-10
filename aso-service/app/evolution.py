@@ -1,5 +1,11 @@
 """
 种子矩阵自迭代：评估表现、剪枝、LLM 生成 pending 种子、校验后激活。
+
+Claude / LLM 调用职责划分（与 n8n 互不替代）：
+1. 本文件 generate_new_seeds：aso-service 内直连 Anthropic（ANTHROPIC_API_KEY），
+   在每次 full 扫描写库后自动执行，属于数据生产链路。
+2. n8n 工作流：用户在 n8n 中自配 AI 节点（Claude/GPT 等）与独立 API Key，
+   在定时拉取 /analysis/compare 等接口后生成报告并推送飞书，与服务内密钥无关。
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from typing import Any
 import requests
 
 from aso_core.autocomplete import get_autocomplete
-from aso_core.settings import get_settings
+from aso_core.scanner import PRIMARY_COUNTRY
 
 from .database import (
     activate_seed,
@@ -249,9 +255,8 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
 
 def _seed_passes_autocomplete(seed: str) -> bool:
     """校验：App Store autocomplete 能返回至少一条结果。"""
-    s = get_settings()
     try:
-        comps = get_autocomplete(seed, country=s.default_country, sleep=0.3)
+        comps = get_autocomplete(seed, country=PRIMARY_COUNTRY, sleep=0.3)
         return len(comps) > 0
     except Exception as exc:
         logger.warning("validate 种子 autocomplete 失败 [%s]: %s", seed, exc)

@@ -5,13 +5,14 @@ ASO 蓝海扫描服务 — FastAPI 入口。
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from aso_core.scanner import run_full_scan
@@ -45,6 +46,8 @@ logger = logging.getLogger(__name__)
 TRACKING_MIN_BLUE_SCORE = 60
 TRACKING_SEED_LOOKBACK_DAYS = 30
 
+_ISO_A2 = re.compile(r"^[a-z]{2}$")
+
 app = FastAPI(title="ASO 蓝海关键词服务", version="1.0.0")
 
 
@@ -63,9 +66,50 @@ def _format_dt(value: datetime | None) -> str | None:
     return str(value)
 
 
+def _normalize_scan_countries(raw: list[str] | None) -> list[str] | None:
+    """
+    校验 POST /scan/start 的 countries：ISO 3166-1 alpha-2 小写，最多 5 国。
+    非法或超限抛出 HTTPException(400)。
+    """
+    if raw is None:
+        return None
+    if len(raw) > 5:
+        raise HTTPException(status_code=400, detail="最多同时扫描 5 个国家")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        cc = str(item).strip().lower()
+        if not _ISO_A2.fullmatch(cc):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "countries 中每项须为 ISO 3166-1 alpha-2 小写（如 us、gb），"
+                    f"非法值: {item!r}"
+                ),
+            )
+        if cc not in seen:
+            seen.add(cc)
+            out.append(cc)
+    return out
+
+
+def _parse_countries_query(countries: str | None) -> list[str] | None:
+    """解析 GET ?countries=us,gb 并校验 alpha-2。"""
+    if countries is None or not str(countries).strip():
+        return None
+    parts = [p.strip().lower() for p in str(countries).split(",") if p.strip()]
+    for p in parts:
+        if not _ISO_A2.fullmatch(p):
+            raise HTTPException(
+                status_code=400,
+                detail=f"countries 查询参数须为逗号分隔的 alpha-2 小写国家码，非法: {p!r}",
+            )
+    return parts
+
+
 def _run_scan_background(
     batch_id: str,
-    country: str,
+    countries: list[str] | None,
     mode: Literal["full", "tracking"],
 ) -> None:
     """后台线程：扫描（full / tracking）→ 蓝海评分 → 入库 → 更新任务状态。"""
@@ -79,11 +123,13 @@ def _run_scan_background(
                     "tracking 模式：无符合条件的 active 种子 batch_id=%s",
                     batch_id,
                 )
-                insert_keywords([], batch_id, country)
+                insert_keywords([], batch_id, "us")
                 update_job(batch_id, "done", total=0)
                 return
             results = run_full_scan(
-                country=country, seeds=seeds, mode="tracking"
+                countries=countries,
+                seeds=seeds,
+                mode="tracking",
             )
         else:
             seeds = get_active_seeds()
@@ -92,13 +138,17 @@ def _run_scan_background(
                     "full 模式：aso_seeds 无 active 种子，batch_id=%s",
                     batch_id,
                 )
-            results = run_full_scan(country=country, seeds=seeds, mode="full")
+            results = run_full_scan(
+                countries=countries,
+                seeds=seeds,
+                mode="full",
+            )
         for r in results:
             score, flags = blue_ocean_score(r)
             r["blue_ocean_score"] = score
             r["blue_ocean_flags"] = flags
             r["blue_ocean_label"] = blue_ocean_label(score)
-        insert_keywords(results, batch_id, country)
+        insert_keywords(results, batch_id, "us")
         if mode == "full":
             run_evolution_after_full_scan(batch_id)
         update_job(batch_id, "done", total=len(results))
@@ -115,7 +165,10 @@ def _run_scan_background(
 class ScanStartBody(BaseModel):
     """触发扫描的请求体。"""
 
-    country: str = Field(default="us", description="主市场区域代码")
+    countries: list[str] | None = Field(
+        default=None,
+        description="可选；不传则使用环境变量 ASO_SCAN_COUNTRIES；每项为 alpha-2 小写，最多 5 个",
+    )
     mode: Literal["full", "tracking"] = Field(
         default="full",
         description=(
@@ -148,12 +201,15 @@ def scan_start(
 ) -> dict:
     """异步启动扫描（全量或追踪），立即返回 batch_id。"""
     batch_id = str(uuid.uuid4())
-    country = body.country.strip().lower() or "us"
     mode = body.mode
+    raw_cc = body.countries
+    if raw_cc is not None and len(raw_cc) == 0:
+        raw_cc = None
+    countries = _normalize_scan_countries(raw_cc)
     create_running_job(batch_id)
     thread = threading.Thread(
         target=_run_scan_background,
-        args=(batch_id, country, mode),
+        args=(batch_id, countries, mode),
         daemon=True,
         name=f"aso-scan-{batch_id[:8]}",
     )
@@ -162,6 +218,7 @@ def scan_start(
         "batch_id": batch_id,
         "status": "started",
         "mode": mode,
+        "countries": countries,
         "message": "扫描任务已启动，使用 batch_id 查询进度",
     }
 
@@ -191,9 +248,14 @@ def analysis_top(
     label: str | None = None,
     limit: int = 50,
     days: int = 7,
+    countries: str | None = Query(
+        default=None,
+        description="可选，逗号分隔 alpha-2 小写，如 us,gb；不传则包含全部国家",
+    ),
 ) -> dict:
     """按时间窗口拉取高分关键词列表（供 n8n / AI 分析）。"""
-    rows = get_top_keywords(label=label, limit=limit, days=days)
+    cc = _parse_countries_query(countries)
+    rows = get_top_keywords(label=label, limit=limit, days=days, countries=cc)
     generated = datetime.now(timezone.utc).replace(tzinfo=None).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
@@ -202,6 +264,7 @@ def analysis_top(
         keywords.append(
             {
                 "keyword": r["keyword"],
+                "country": (r.get("country") or "").strip().lower(),
                 "blue_ocean_score": int(r["blue_ocean_score"] or 0),
                 "blue_ocean_label": r.get("blue_ocean_label") or "",
                 "blue_ocean_flags": r.get("blue_ocean_flags") or "",

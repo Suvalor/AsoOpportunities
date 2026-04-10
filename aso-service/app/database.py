@@ -212,8 +212,11 @@ def update_job(
             conn.close()
 
 
-def insert_keywords(rows: list[dict], batch_id: str, country: str) -> None:
-    """批量插入关键词扫描结果（INSERT IGNORE + executemany）。"""
+def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> None:
+    """
+    批量插入关键词扫描结果（INSERT IGNORE + executemany）。
+    每条 row 应含 country 字段；缺失时回退为参数 country（兼容旧调用）。
+    """
     if not rows:
         return
 
@@ -231,11 +234,12 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str) -> None:
     tuples: list[tuple] = []
     for r in rows:
         flags = (r.get("blue_ocean_flags") or "")[:500]
+        row_country = (r.get("country") or country or "us").strip().lower()[:10]
         tuples.append(
             (
                 r["keyword"],
                 r.get("seed"),
-                country,
+                row_country,
                 r.get("autocomplete_rank"),
                 r.get("top_app_reviews"),
                 float(r.get("avg_reviews") or 0),
@@ -292,43 +296,46 @@ def get_top_keywords(
     label: str | None = None,
     limit: int = 50,
     days: int = 7,
+    countries: list[str] | None = None,
 ) -> list[dict]:
     """
-    按时间窗口与可选标签筛选，按 blue_ocean_score 降序返回关键词摘要。
+    按时间窗口与可选标签、可选国家列表筛选，按 blue_ocean_score 降序返回关键词摘要。
+    countries 为 None 时不过滤国家；传入时仅保留 country IN (...) 的行。
     limit 最大 200。
     """
     limit = min(max(limit, 1), 200)
+    cc_list: list[str] | None = None
+    if countries is not None:
+        cc_list = [c.strip().lower()[:10] for c in countries if c and str(c).strip()]
+        if not cc_list:
+            cc_list = None
+
     conn = None
     try:
         conn = _get_connection()
         with conn.cursor() as cur:
+            where_extra = ""
+            params: list[Any] = [days]
             if label is not None:
-                cur.execute(
-                    """
-                    SELECT keyword, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
+                where_extra += " AND blue_ocean_label = %s"
+                params.append(label)
+            if cc_list is not None:
+                ph = ",".join(["%s"] * len(cc_list))
+                where_extra += f" AND country IN ({ph})"
+                params.extend(cc_list)
+            params.append(limit)
+
+            sql = f"""
+                    SELECT keyword, country, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
                            top_reviews, concentration, avg_update_age_months,
                            trend_gap, rank_change, scanned_at
                     FROM aso_keywords
                     WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
-                      AND blue_ocean_label = %s
+                      {where_extra}
                     ORDER BY blue_ocean_score DESC
                     LIMIT %s
-                    """,
-                    (days, label, limit),
-                )
-            else:
-                cur.execute(
                     """
-                    SELECT keyword, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
-                           top_reviews, concentration, avg_update_age_months,
-                           trend_gap, rank_change, scanned_at
-                    FROM aso_keywords
-                    WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
-                    ORDER BY blue_ocean_score DESC
-                    LIMIT %s
-                    """,
-                    (days, limit),
-                )
+            cur.execute(sql, tuple(params))
             rows = cur.fetchall()
             return [dict(r) for r in rows]
     except Exception as exc:

@@ -1,12 +1,13 @@
 """
 全量关键词采集：Autocomplete + iTunes 竞争数据，含 seed_coverage、trend_gap、rank_change。
-不写 CSV、不计算蓝海分（由入口层调用 scorer）。
+支持多国家：按 ASO_SCAN_COUNTRIES 顺序逐国扫描，每条结果含 country 字段。
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,36 +22,89 @@ from .settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-TREND_COUNTRIES = ["gb", "au", "ca"]
+# 模块级国家配置（可被环境变量覆盖）
+PRIMARY_COUNTRY = os.getenv("ASO_PRIMARY_COUNTRY", "us").strip().lower() or "us"
+SCAN_COUNTRIES = [
+    c.strip().lower()
+    for c in os.getenv("ASO_SCAN_COUNTRIES", "us").split(",")
+    if c.strip()
+]
+TREND_COUNTRIES = [
+    c.strip().lower()
+    for c in os.getenv("ASO_TREND_COUNTRIES", "gb,au,ca").split(",")
+    if c.strip()
+]
+
 TREND_SLEEP = 0.8
 TREND_TOP_N = 50
 
 
-def compute_trend_gap(keyword: str, us_rank: int, sleep: float = TREND_SLEEP) -> float:
+def _history_key(country: str, keyword: str) -> str:
+    return f"{country.lower().strip()}|{keyword.lower().strip()}"
+
+
+def _normalize_snapshot_keys(snap: dict) -> dict[str, int]:
+    """兼容旧版 rank_history（仅 keyword 为键）：视为 PRIMARY_COUNTRY 下数据。"""
+    out: dict[str, int] = {}
+    for k, v in snap.items():
+        ks = str(k).lower().strip()
+        if "|" in ks:
+            out[ks] = int(v)
+        else:
+            out[_history_key(PRIMARY_COUNTRY, ks)] = int(v)
+    return out
+
+
+def _lookup_autocomplete_rank(keyword: str, country: str, sleep: float) -> int | None:
+    try:
+        completions = get_autocomplete(keyword, country=country, sleep=sleep)
+        r = next(
+            (rk for kw, rk in completions if kw.lower() == keyword.lower()),
+            None,
+        )
+        return int(r) if r is not None else None
+    except Exception as exc:
+        logger.warning("trend_gap 查排名失败 [%s/%s]: %s", keyword, country, exc)
+        return None
+
+
+def compute_trend_gap(
+    keyword: str,
+    rank_in_scan_country: int,
+    scan_country: str,
+    sleep: float = TREND_SLEEP,
+) -> float:
     """
-    查询 gb/au/ca 三国 autocomplete 排名，返回 avg(其他国有效排名) - us_rank。
-    找不到任何其他国家排名时返回 0。
+    以 PRIMARY_COUNTRY 的排名为基准，与 TREND_COUNTRIES 中各国排名对比。
+    返回 avg(对比国有效排名) - 主市场排名；无主市场排名或无对比国数据时返回 0。
+
+    配置上与文档一致：all_trend_countries = [PRIMARY_COUNTRY] + TREND_COUNTRIES；
+    差分值仍按「TREND_COUNTRIES 各国均位 − 主市场位」计算。
     """
+    sc = scan_country.strip().lower()
+    if sc == PRIMARY_COUNTRY:
+        primary_rank = rank_in_scan_country
+    else:
+        pr = _lookup_autocomplete_rank(keyword, PRIMARY_COUNTRY, sleep=sleep)
+        if pr is None:
+            return 0.0
+        primary_rank = pr
+
     other_ranks: list[int] = []
     for country in TREND_COUNTRIES:
-        try:
-            completions = get_autocomplete(keyword, country=country, sleep=sleep)
-            rank_in_country = next(
-                (r for kw, r in completions if kw.lower() == keyword.lower()),
-                None,
-            )
-            if rank_in_country is not None:
-                other_ranks.append(rank_in_country)
-        except Exception as exc:
-            logger.warning("trend_gap 查询失败 [%s/%s]: %s", keyword, country, exc)
+        if country == PRIMARY_COUNTRY:
+            continue
+        r = _lookup_autocomplete_rank(keyword, country, sleep=sleep)
+        if r is not None:
+            other_ranks.append(r)
 
     if not other_ranks:
         return 0.0
-    return round(sum(other_ranks) / len(other_ranks) - us_rank, 2)
+    return round(sum(other_ranks) / len(other_ranks) - primary_rank, 2)
 
 
 def load_rank_history(rank_file: Path) -> dict:
-    """读取 rank_history.json，返回 {date_str: {keyword: rank}}。"""
+    """读取 rank_history.json，返回 {date_str: {composite_key: rank}}。"""
     if not rank_file.exists():
         return {}
     try:
@@ -62,28 +116,37 @@ def load_rank_history(rank_file: Path) -> dict:
 
 
 def compute_rank_changes(results: list[dict], history: dict) -> dict[str, int]:
-    """rank_change = prev_rank - current_rank（正数表示排名上升）；历史少于 2 个快照时为空。"""
+    """
+    rank_change = prev_rank - current_rank（正数表示排名上升）；历史少于 2 个快照时为空。
+    键为 composite_key（country|keyword）。
+    """
     changes: dict[str, int] = {}
     if len(history) < 2:
         return changes
 
     sorted_dates = sorted(history.keys())
-    prev_snapshot = history[sorted_dates[-1]]
+    prev_raw = history[sorted_dates[-1]]
+    prev_snapshot = _normalize_snapshot_keys(prev_raw if isinstance(prev_raw, dict) else {})
 
     for r in results:
         kw = r["keyword"].lower().strip()
-        prev_rank = prev_snapshot.get(kw)
+        cc = str(r.get("country") or PRIMARY_COUNTRY).lower().strip()
+        key = _history_key(cc, kw)
+        prev_rank = prev_snapshot.get(key)
         if prev_rank is not None:
-            changes[kw] = int(prev_rank) - r["autocomplete_rank"]
+            changes[key] = int(prev_rank) - r["autocomplete_rank"]
     return changes
 
 
 def save_rank_history(results: list[dict], history: dict, rank_file: Path) -> bool:
-    """以今天日期为 key 合并写入 rank_history.json。"""
+    """以今天日期为 key 合并写入 rank_history.json（键为 country|keyword）。"""
     rank_file.parent.mkdir(parents=True, exist_ok=True)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     snapshot = {
-        r["keyword"].lower().strip(): r["autocomplete_rank"] for r in results
+        _history_key(str(r.get("country") or PRIMARY_COUNTRY), r["keyword"]): r[
+            "autocomplete_rank"
+        ]
+        for r in results
     }
     history[today] = snapshot
     try:
@@ -103,10 +166,11 @@ def _ingest_record(
     rank: int,
     country: str,
 ) -> None:
-    """单条关键词写入去重字典（保留更高 opportunity_score）。"""
+    """单条关键词写入去重字典（同一国家内保留更高 opportunity_score）。"""
     comp = get_competition(keyword, country=country)
     score = opportunity_score(rank, comp)
     record = {
+        "country": country,
         "seed": seed,
         "keyword": keyword,
         "autocomplete_rank": rank,
@@ -122,32 +186,93 @@ def _ingest_record(
         "trend_gap": 0.0,
         "rank_change": 0,
     }
-    key = keyword.lower().strip()
+    key = _history_key(country, keyword)
     keyword_seeds[key].add(seed)
     if key not in best or score > best[key]["opportunity_score"]:
         best[key] = record
 
 
+def _scan_single_country(
+    country: str,
+    seeds: list[str],
+    mode: str,
+) -> list[dict]:
+    """单国：种子展开 → 去重 → seed_coverage → trend_gap（Top N）。"""
+    best: dict[str, dict] = {}
+    keyword_seeds: dict[str, set] = defaultdict(set)
+
+    desc = "追踪种子" if mode == "tracking" else "种子词"
+    label = f"{desc}[{country}]"
+    for seed in tqdm(seeds, desc=label, unit="seed"):
+        completions = get_autocomplete(seed, country=country)
+        if not completions:
+            logger.debug("种子词 [%s] 在 %s 无补全结果，跳过", seed, country)
+            continue
+
+        for keyword, rank in tqdm(
+            completions,
+            desc=f"  {seed}",
+            unit="kw",
+            leave=False,
+        ):
+            _ingest_record(best, keyword_seeds, seed, keyword, rank, country)
+
+    if not best:
+        logger.warning("国家 %s 未得到任何关键词。", country)
+        return []
+
+    results = sorted(best.values(), key=lambda r: r["opportunity_score"], reverse=True)
+
+    for r in results:
+        key = _history_key(country, r["keyword"])
+        r["seed_coverage"] = len(keyword_seeds[key])
+
+    logger.info(
+        "国家 %s：计算 Top %d 关键词的跨国趋势信号（trend_gap，主市场=%s，对比国=%s）...",
+        country,
+        TREND_TOP_N,
+        PRIMARY_COUNTRY,
+        ",".join(TREND_COUNTRIES) or "(无)",
+    )
+    for r in tqdm(
+        results[:TREND_TOP_N],
+        desc=f"trend_gap[{country}]",
+        unit="kw",
+    ):
+        r["trend_gap"] = compute_trend_gap(
+            r["keyword"],
+            r["autocomplete_rank"],
+            country,
+        )
+
+    return results
+
+
 def run_full_scan(
-    country: str | None = None,
+    countries: list[str] | None = None,
     seeds: Sequence[str] | None = None,
     rank_history_path: Path | str | None = None,
     mode: str = "full",
 ) -> list[dict]:
     """
-    遍历种子词或追踪词列表，去重后返回结果列表（不含蓝海分字段）。
+    按国家列表依次执行种子矩阵扫描，合并结果；每条记录含 country。
 
-    :param country: 主市场；None 时使用 settings.default_country
-    :param seeds: 为 None 且 mode=full 时用内置 SEEDS（CLI）；服务侧应传入 DB 查询得到的种子列表
-    :param rank_history_path: 排名历史文件路径；None 时使用 settings.rank_history_path
-    :param mode: ``full`` 为完整种子矩阵；``tracking`` 仅刷新传入的关键词（逐词查补全位次与竞争）
+    :param countries: 为 None 时使用环境变量 ASO_SCAN_COUNTRIES 解析后的 SCAN_COUNTRIES
+    :param seeds: 为 None 且 mode=full 时用内置 SEEDS（CLI）；服务侧传入 DB 种子列表
+    :param rank_history_path: 排名历史文件路径；None 时用 settings.rank_history_path
+    :param mode: full 或 tracking（均按种子展开 autocomplete）
     """
     s = get_settings()
-    if country is None:
-        country = s.default_country
     mode = (mode or "full").strip().lower()
     if mode not in ("full", "tracking"):
         mode = "full"
+
+    if countries is None:
+        countries = list(SCAN_COUNTRIES)
+    countries = [c.strip().lower() for c in countries if c and str(c).strip()]
+    if not countries:
+        logger.warning("国家列表为空，跳过扫描。")
+        return []
 
     if not seeds:
         if mode == "tracking":
@@ -162,44 +287,21 @@ def run_full_scan(
     else:
         rank_file = Path(rank_history_path)
 
-    best: dict[str, dict] = {}
-    keyword_seeds: dict[str, set] = defaultdict(set)
+    all_results: list[dict] = []
+    for country in countries:
+        part = _scan_single_country(country, seed_list, mode)
+        all_results.extend(part)
 
-    desc = "追踪种子" if mode == "tracking" else "种子词"
-    for seed in tqdm(seed_list, desc=desc, unit="seed"):
-        completions = get_autocomplete(seed, country=country)
-        if not completions:
-            logger.debug("种子词 [%s] 无补全结果，跳过", seed)
-            continue
-
-        for keyword, rank in tqdm(
-            completions,
-            desc=f"  {seed}",
-            unit="kw",
-            leave=False,
-        ):
-            _ingest_record(best, keyword_seeds, seed, keyword, rank, country)
-
-    if not best:
+    if not all_results:
         logger.warning("没有找到任何关键词，请检查网络连接或种子词配置。")
         return []
 
-    results = sorted(best.values(), key=lambda r: r["opportunity_score"], reverse=True)
-
-    for r in results:
-        key = r["keyword"].lower().strip()
-        r["seed_coverage"] = len(keyword_seeds[key])
-
-    logger.info("计算 Top %d 关键词的跨国趋势信号（trend_gap）...", TREND_TOP_N)
-    for r in tqdm(results[:TREND_TOP_N], desc="trend_gap", unit="kw"):
-        r["trend_gap"] = compute_trend_gap(r["keyword"], r["autocomplete_rank"])
-
     history = load_rank_history(rank_file)
-    rank_changes = compute_rank_changes(results, history)
-    for r in results:
-        key = r["keyword"].lower().strip()
+    rank_changes = compute_rank_changes(all_results, history)
+    for r in all_results:
+        key = _history_key(str(r.get("country") or PRIMARY_COUNTRY), r["keyword"])
         r["rank_change"] = rank_changes.get(key, 0)
 
-    save_rank_history(results, history, rank_file)
+    save_rank_history(all_results, history, rank_file)
 
-    return results
+    return all_results
