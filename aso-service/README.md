@@ -17,9 +17,9 @@
 
 ### 链路二：n8n 周期拉取分析接口 → AI → 飞书等
 
-1. n8n **Schedule**（建议与链路一错开，例如扫描完成后次日）。
-2. 调用 **`GET /analysis/top`**（可按 `label`、`days`、`limit` 过滤），从库中读取最近一段时间内的关键词快照。
-3. 将响应中的 **`keywords`**（或整段 JSON）传入 **AI 节点**（Claude / GPT 等），按业务 Prompt 生成分析报告。
+1. n8n **Schedule**（建议与全量扫描错开，例如次日早间）。
+2. 调用 **`GET /analysis/compare`**（推荐，带本期/基线窗口与 `rising` / `new_entries` 等分类）或 **`GET /analysis/top`**（简单 Top 列表，按 `label` / `days` / `limit` 过滤）。
+3. 将响应中的结构化数据传入 **AI 节点**（Claude / GPT 等），按业务 Prompt 生成对比解读或机会清单。
 4. 将 AI 输出通过 **飞书机器人 Webhook**、企业微信、邮件等节点推送给业务方。
 
 本服务**不**内置大模型调用；**分析文案与推送渠道均在 n8n 侧配置**。
@@ -40,11 +40,15 @@ flowchart LR
   end
   subgraph analysisFlow [链路二_分析推送]
     n8nPull[n8n周期]
+    getCmp["GET_analysis_compare"]
     getTop["GET_analysis_top"]
     aiNode[AI模型]
     notify[飞书等]
+    n8nPull --> getCmp
     n8nPull --> getTop
+    getCmp --> db
     getTop --> db
+    getCmp --> aiNode
     getTop --> aiNode
     aiNode --> notify
   end
@@ -72,7 +76,16 @@ docker compose logs -f aso-service
 curl -X POST http://localhost:8000/scan/start \
   -H "X-API-Key: 你的API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"country": "us"}'
+  -d '{"country": "us", "mode": "full"}'
+```
+
+每日追踪模式（仅刷新库中蓝海分≥60 的词）：
+
+```bash
+curl -X POST http://localhost:8000/scan/start \
+  -H "X-API-Key: 你的API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"country": "us", "mode": "tracking"}'
 ```
 
 ## 查询任务状态
@@ -82,10 +95,17 @@ curl http://localhost:8000/scan/status/{batch_id} \
   -H "X-API-Key: 你的API_KEY"
 ```
 
-## 拉取分析结果
+## 拉取分析结果（Top 列表）
 
 ```bash
 curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
+  -H "X-API-Key: 你的API_KEY"
+```
+
+## 对比分析（本期 vs 基线）
+
+```bash
+curl "http://localhost:8000/analysis/compare?days_recent=7&days_baseline=14" \
   -H "X-API-Key: 你的API_KEY"
 ```
 
@@ -107,9 +127,10 @@ curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
 | GET | `/health` | 否 | 健康检查（Docker / 负载均衡探活） |
-| POST | `/scan/start` | 是 | 异步启动全量扫描；立即返回 `batch_id` |
+| POST | `/scan/start` | 是 | 异步启动扫描（`mode=full` 全量 / `tracking` 追踪高分词）；立即返回 `batch_id` |
 | GET | `/scan/status/{batch_id}` | 是 | 查询扫描任务状态与关键词条数 |
 | GET | `/analysis/top` | 是 | 按时间窗口与标签从库中拉取 Top 关键词 |
+| GET | `/analysis/compare` | 是 | 本期与基线窗口对比，返回 `rising` / `new_entries` / `sustained` / `dropping` |
 
 **排名历史文件**：`rank_history.json` 路径由环境变量 **`RANK_HISTORY_PATH`** 指定（Compose 示例：`/data/rank_history.json`），挂载到 **`aso-data`** 卷，容器重启后不丢失。
 
@@ -129,7 +150,7 @@ curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
 
 ### POST `/scan/start`
 
-启动一次全量关键词扫描（后台执行）。
+启动一次关键词扫描（后台执行）：**全量种子矩阵**或**追踪库内高分词**。
 
 **请求头**
 
@@ -141,11 +162,18 @@ curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `country` | string | 否 | 主市场区域，默认 `"us"` |
+| `mode` | string | 否 | `"full"`（默认）= 完整 `SEEDS` 矩阵；`"tracking"` = 仅扫描库中 **最新一条记录** 满足 `blue_ocean_score >= 60` 的去重关键词 |
+
+`tracking` 模式依赖历史入库数据；若无任何达标词，任务立即 `done` 且 `total_keywords=0`。
 
 示例：
 
 ```json
-{"country": "us"}
+{"country": "us", "mode": "full"}
+```
+
+```json
+{"country": "us", "mode": "tracking"}
 ```
 
 **响应示例（200）**
@@ -154,6 +182,7 @@ curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
 {
   "batch_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "started",
+  "mode": "full",
   "message": "扫描任务已启动，使用 batch_id 查询进度"
 }
 ```
@@ -234,7 +263,72 @@ curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
 
 **说明**：`top_reviews` 等字段可能为 `null`（视入库数据而定）；n8n 下游 AI 节点请对空值做容错。
 
-## n8n Workflow 1：定时扫描（建议每周一 02:00）
+---
+
+### GET `/analysis/compare`
+
+对比 **本期窗口** 与 **基线窗口** 内、每个关键词**各自最新一条**快照的蓝海分变化。`score_delta` 在 SQL 中通过两期分数 **`UNION ALL` + `LAG(blue_ocean_score) OVER (PARTITION BY keyword ORDER BY phase)`** 得到（`phase=0` 基线，`phase=1` 本期）。
+
+**时间窗口定义**
+
+- **本期**：`scanned_at >= NOW() - days_recent` 天。
+- **基线**：`scanned_at >= NOW() - (days_recent + days_baseline)` 天 **且** `scanned_at < NOW() - days_recent` 天。
+
+**请求头**
+
+- `X-API-Key: <API_KEY>`
+
+**Query 参数**
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| `days_recent` | int | 否 | 7 | 本期长度（天），范围 1–366 |
+| `days_baseline` | int | 否 | 14 | 基线长度（天），范围 1–366 |
+
+**响应示例（200）**
+
+单条关键词对象字段与 **`GET /analysis/top`** 中 `keywords[]` 元素一致，并增加整数 **`score_delta`**：
+
+- 基线无该词：`score_delta` = 本期 `blue_ocean_score`（归入 **`new_entries`**）。
+- 两期均有：`score_delta` = 本期分 − 基线分；`>0` → **`rising`**，`<0` → **`dropping`**，`0` → **`sustained`**。
+
+```json
+{
+  "generated_at": "2026-04-10 09:00:00",
+  "days_recent": 7,
+  "days_baseline": 14,
+  "counts": {
+    "rising": 3,
+    "new_entries": 2,
+    "sustained": 10,
+    "dropping": 1
+  },
+  "rising": [],
+  "new_entries": [],
+  "sustained": [],
+  "dropping": []
+}
+```
+
+各数组内对象示例（与 `/analysis/top` 一致并含 `score_delta`）：
+
+```json
+{
+  "keyword": "track medication",
+  "blue_ocean_score": 85,
+  "blue_ocean_label": "💎 金矿",
+  "blue_ocean_flags": "多路径触发 | 头部极弱",
+  "top_reviews": 320,
+  "concentration": 0.21,
+  "avg_update_age_months": 18.0,
+  "trend_gap": 4.1,
+  "rank_change": 3,
+  "scanned_at": "2026-04-10 02:45:00",
+  "score_delta": 5
+}
+```
+
+## n8n Workflow 1：定时全量扫描（建议每周一 02:00）
 
 **节点1 — Schedule Trigger**
 
@@ -245,7 +339,7 @@ curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
 - Method: POST
 - URL: `http://aso-service:8000/scan/start`
 - Headers: `X-API-Key` → `{{$env.ASO_API_KEY}}`
-- Body (JSON): `{"country": "us"}`
+- Body (JSON): `{"country": "us", "mode": "full"}`
 
 **节点3 — Wait**
 
@@ -257,39 +351,84 @@ curl "http://localhost:8000/analysis/top?label=💎%20金矿&limit=20&days=7" \
 - URL: `http://aso-service:8000/scan/status/{{$node["触发扫描"].json.batch_id}}`
 - Headers: `X-API-Key` → `{{$env.ASO_API_KEY}}`
 
-## n8n Workflow 2：分析推送（建议每周二 09:00）
+## n8n Workflow A：每日追踪扫描（建议每日 03:00）
+
+用于在两次全量扫描之间**低成本刷新**库内已标为高分（蓝海分≥60）的关键词，便于趋势与对比接口有连续数据。
+
+**节点1 — Schedule Trigger**
+
+- 每日 03:00（按服务器时区）
+
+**节点2 — HTTP Request（触发追踪扫描）**
+
+- Method: POST
+- URL: `http://aso-service:8000/scan/start`
+- Headers: `X-API-Key` → `{{$env.ASO_API_KEY}}`
+- Body (JSON): `{"country": "us", "mode": "tracking"}`
+
+**节点3 — Wait**
+
+- 等待 **15 分钟**（追踪词量远小于全量，一般足够；若超时可将节点4改为循环轮询直至 `done`）
+
+**节点4 — HTTP Request（确认完成）**
+
+- Method: GET
+- URL: `http://aso-service:8000/scan/status/{{$node["触发追踪扫描"].json.batch_id}}`
+- Headers: `X-API-Key` → `{{$env.ASO_API_KEY}}`
+
+## n8n Workflow C：对比分析推送（建议每周二 09:00）
 
 **节点1 — Schedule Trigger**
 
 - 每周二 09:00 触发
 
-**节点2 — HTTP Request（拉取蓝海数据）**
+**节点2 — HTTP Request（拉取对比数据）**
 
 - Method: GET
-- URL: `http://aso-service:8000/analysis/top?label=💎 金矿&limit=20&days=7`
+- URL: `http://aso-service:8000/analysis/compare?days_recent=7&days_baseline=14`
 - Headers: `X-API-Key` → `{{$env.ASO_API_KEY}}`
+
+（若仅需静态 Top 列表、不做窗口对比，可仍使用 `GET /analysis/top`。）
 
 **节点3 — AI 模型节点（Claude / GPT）**
 
 System Prompt：
 
 ```
-你是一位 App Store 市场分析师，擅长从关键词数据中识别产品机会。
-请用中文回答，结构清晰，重点突出。
+你是一位 App Store 市场分析师，擅长解读关键词蓝海分的变化与产品机会。
+请用中文回答，结构清晰，善用标题与小节；涉及分数时请引用接口给出的 score_delta 与 blue_ocean_score。
 ```
 
-User Prompt 模板：
+User Prompt 模板（结构化对比版，数据源为 `/analysis/compare` 的 JSON）：
 
 ```
-以下是本周 App Store 蓝海关键词扫描结果，请完成以下分析：
+以下是 ASO 服务返回的「本期 vs 基线」对比结果（字段含义：rising=分数上升，new_entries=本期新出现，
+sustained=两期同分，dropping=分数下滑；每条含 score_delta 与当前 blue_ocean_score）。
 
-1. 推荐最值得立项的3个关键词，说明理由
-2. 识别这批词背后共同的用户需求模式
-3. 对每个推荐词给出 MVP 核心功能（1句话）
-4. 指出需要警惕的风险点
+请按下面结构输出 Markdown：
 
-数据如下：
-{{$json.keywords}}
+## 1. 执行摘要
+用 3～5 句话概括本周关键词池整体是变强、走平还是走弱。
+
+## 2. 上升与新进（重点机会）
+- 从 rising 与 new_entries 中各选最值得关注的共 3～5 个词
+- 每个词：一句话机会判断 + score_delta 与当前分说明
+
+## 3. 持续高分的护城河词
+- 从 sustained 中选 2～4 个词，说明为何值得长期跟踪
+
+## 4. 下滑与风险
+- 从 dropping 中列出需警惕的词及可能原因（竞争加剧、补全排名变化等，可结合 flags）
+
+## 5. 下周建议动作
+- 产品侧 / 投放侧各 1～2 条可执行建议
+
+原始数据（勿逐条照抄，用于推理）：
+rising: {{$json.rising}}
+new_entries: {{$json.new_entries}}
+sustained: {{$json.sustained}}
+dropping: {{$json.dropping}}
+counts: {{$json.counts}}
 ```
 
 **节点4 — 飞书 Webhook**
@@ -350,7 +489,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### n8n 与接口契约（强约束）
 
-1. **勿随意改名**：`POST /scan/start`、`GET /scan/status/{batch_id}`、`GET /analysis/top` 的路径及现有 JSON 字段名被 n8n 工作流硬编码引用；变更视为 **破坏性更新**，需同步改 n8n 并发版说明。
+1. **勿随意改名**：`POST /scan/start`、`GET /scan/status/{batch_id}`、`GET /analysis/top`、`GET /analysis/compare` 的路径及现有 JSON 字段名被 n8n 工作流硬编码引用；变更视为 **破坏性更新**，需同步改 n8n 并发版说明。`POST /scan/start` 新增字段须**保持向后兼容**（未传 `mode` 时等价 `full`）。
 2. **长任务必须异步**：扫描耗时长，**必须**「`start` 拿 `batch_id` + 轮询 `status`」，不要让 n8n 单次 HTTP 请求同步等待扫描结束，以免超时。
 3. **密钥不入库**：`API_KEY` 仅放在 n8n 环境变量或凭据中，不要写进工作流 JSON 明文（若导出备份需脱敏）。
 
@@ -365,15 +504,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 必须遵守：
 1. 业务逻辑（Apple API、扫描流程、蓝海评分、配置读取）只允许在 aso_core/ 内修改；aso-service/app/ 只做鉴权、路由、MySQL 与线程调度。
-2. 除非用户明确要求「破坏性变更」，否则保持以下 API 不变：POST /scan/start、GET /scan/status/{batch_id}、GET /analysis/top、GET /health；响应 JSON 的字段名与含义与 README 一致。
+2. 除非用户明确要求「破坏性变更」，否则保持以下 API 不变：POST /scan/start（含默认 mode）、GET /scan/status/{batch_id}、GET /analysis/top、GET /analysis/compare、GET /health；响应 JSON 的字段名与含义与 README 一致。
 3. 扫描是长时间后台任务：POST /scan/start 只返回 batch_id，不得改为同步阻塞至扫描结束。
 4. 不要引入任务队列（Celery/Redis）除非用户明确要求；当前架构为 threading + MySQL。
 5. 修改数据库表结构时同步更新 app/database.py 中的 init_db 与读写 SQL，并考虑已有 n8n 只读 analysis 接口的兼容性。
 6. 依赖以仓库根 requirements.txt 为准；Docker 构建上下文为仓库根（docker-compose 中 context: ..）。
 
 当前业务链路简述：
-- 链路一：n8n 定时 POST /scan/start → 轮询 GET /scan/status → 数据进 MySQL。
-- 链路二：n8n 定时 GET /analysis/top → 把 keywords 交给大模型 → 飞书等 Webhook 推送。
+- 链路一：n8n 定时 POST /scan/start（full 全量 或 tracking 追踪高分词）→ 轮询 GET /scan/status → 数据进 MySQL。
+- 链路二：n8n 定时 GET /analysis/compare（或 /analysis/top）→ 把结构化列表交给大模型 → 飞书等 Webhook 推送。
+- 追踪阈值 60 与 database.get_tracked_keywords / 服务内写死一致；若调整需同步改 app/main.py 与 README。
 ```
 
 ---
@@ -382,6 +522,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 | README 章节 | 链路一（采数） | 链路二（分析推送） |
 |-------------|----------------|-------------------|
-| n8n Workflow 1 | 是 | 否 |
-| n8n Workflow 2 | 否 | 是 |
-| 接口调用文档 | `POST /scan/start`、`GET /scan/status` | `GET /analysis/top` |
+| n8n Workflow 1（全量） | 是（`mode=full`） | 否 |
+| n8n Workflow A（每日追踪） | 是（`mode=tracking`） | 否 |
+| n8n Workflow C（对比报告） | 否 | 是（`GET /analysis/compare`） |
+| 接口调用文档 | `POST /scan/start`、`GET /scan/status` | `GET /analysis/top`、`GET /analysis/compare` |

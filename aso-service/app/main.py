@@ -8,7 +8,7 @@ import logging
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
@@ -20,8 +20,10 @@ from aso_core.scorer import blue_ocean_label, blue_ocean_score
 from .auth import verify_api_key
 from .database import (
     create_running_job,
+    get_compare_analysis,
     get_job,
     get_top_keywords,
+    get_tracked_keywords,
     init_db,
     insert_keywords,
     update_job,
@@ -35,6 +37,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# 与 database.get_tracked_keywords 及 README 中「追踪模式」说明保持一致
+TRACKING_MIN_BLUE_SCORE = 60
 
 app = FastAPI(title="ASO 蓝海关键词服务", version="1.0.0")
 
@@ -54,10 +59,28 @@ def _format_dt(value: datetime | None) -> str | None:
     return str(value)
 
 
-def _run_scan_background(batch_id: str, country: str) -> None:
-    """后台线程：全量扫描 → 蓝海评分 → 入库 → 更新任务状态。"""
+def _run_scan_background(
+    batch_id: str,
+    country: str,
+    mode: Literal["full", "tracking"],
+) -> None:
+    """后台线程：扫描（full / tracking）→ 蓝海评分 → 入库 → 更新任务状态。"""
     try:
-        results = run_full_scan(country=country)
+        if mode == "tracking":
+            seeds = get_tracked_keywords(TRACKING_MIN_BLUE_SCORE)
+            if not seeds:
+                logger.info(
+                    "tracking 模式：无 blue_ocean_score>=60 的关键词，batch_id=%s",
+                    batch_id,
+                )
+                insert_keywords([], batch_id, country)
+                update_job(batch_id, "done", total=0)
+                return
+            results = run_full_scan(
+                country=country, seeds=seeds, mode="tracking"
+            )
+        else:
+            results = run_full_scan(country=country, seeds=None, mode="full")
         for r in results:
             score, flags = blue_ocean_score(r)
             r["blue_ocean_score"] = score
@@ -79,6 +102,10 @@ class ScanStartBody(BaseModel):
     """触发扫描的请求体。"""
 
     country: str = Field(default="us", description="主市场区域代码")
+    mode: Literal["full", "tracking"] = Field(
+        default="full",
+        description="full=完整种子矩阵；tracking=仅刷新库中蓝海分≥60的关键词",
+    )
 
 
 @app.get("/health")
@@ -92,13 +119,14 @@ def scan_start(
     body: ScanStartBody,
     _: Annotated[None, Depends(verify_api_key)],
 ) -> dict:
-    """异步启动全量扫描，立即返回 batch_id。"""
+    """异步启动扫描（全量或追踪），立即返回 batch_id。"""
     batch_id = str(uuid.uuid4())
     country = body.country.strip().lower() or "us"
+    mode = body.mode
     create_running_job(batch_id)
     thread = threading.Thread(
         target=_run_scan_background,
-        args=(batch_id, country),
+        args=(batch_id, country, mode),
         daemon=True,
         name=f"aso-scan-{batch_id[:8]}",
     )
@@ -106,6 +134,7 @@ def scan_start(
     return {
         "batch_id": batch_id,
         "status": "started",
+        "mode": mode,
         "message": "扫描任务已启动，使用 batch_id 查询进度",
     }
 
@@ -167,4 +196,37 @@ def analysis_top(
         "generated_at": generated,
         "total": len(keywords),
         "keywords": keywords,
+    }
+
+
+@app.get("/analysis/compare")
+def analysis_compare(
+    _: Annotated[None, Depends(verify_api_key)],
+    days_recent: int = 7,
+    days_baseline: int = 14,
+) -> dict:
+    """
+    对比本期（最近 days_recent 天）与基线窗口（此前连续 days_baseline 天）内各词最新快照。
+    score_delta 由 MySQL LAG 与两期 UNION 推导，见 database.get_compare_analysis。
+    """
+    dr = min(max(int(days_recent), 1), 366)
+    db = min(max(int(days_baseline), 1), 366)
+    buckets = get_compare_analysis(days_recent=dr, days_baseline=db)
+    generated = datetime.now(timezone.utc).replace(tzinfo=None).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    return {
+        "generated_at": generated,
+        "days_recent": dr,
+        "days_baseline": db,
+        "counts": {
+            "rising": len(buckets["rising"]),
+            "new_entries": len(buckets["new_entries"]),
+            "sustained": len(buckets["sustained"]),
+            "dropping": len(buckets["dropping"]),
+        },
+        "rising": buckets["rising"],
+        "new_entries": buckets["new_entries"],
+        "sustained": buckets["sustained"],
+        "dropping": buckets["dropping"],
     }

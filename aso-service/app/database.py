@@ -272,3 +272,206 @@ def get_top_keywords(
     finally:
         if conn is not None:
             conn.close()
+
+
+def get_tracked_keywords(min_score: int) -> list[str]:
+    """
+    返回「每个关键词最新一条扫描记录中蓝海分 >= min_score」的去重关键词列表（按 keyword 排序）。
+    使用 ROW_NUMBER 按 keyword 分区、按 scanned_at 降序取最新一行。
+    """
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH latest AS (
+                  SELECT keyword,
+                         blue_ocean_score,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY keyword ORDER BY scanned_at DESC
+                         ) AS rn
+                  FROM aso_keywords
+                )
+                SELECT keyword
+                FROM latest
+                WHERE rn = 1 AND blue_ocean_score >= %s
+                ORDER BY keyword
+                """,
+                (min_score,),
+            )
+            rows = cur.fetchall()
+            return [str(r["keyword"]) for r in rows]
+    except Exception as exc:
+        logger.error("get_tracked_keywords 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_compare_analysis(
+    days_recent: int = 7,
+    days_baseline: int = 14,
+) -> dict[str, list[dict]]:
+    """
+    本期窗口：最近 days_recent 天；基线窗口：其前连续 days_baseline 天。
+    对每期按 keyword 取最新一条快照，用 UNION + LAG() 得到基线分，再算 score_delta。
+
+    分类（仅包含「本期窗口内出现过」的关键词）：
+    - new_entries：基线窗口无该词，score_delta = 本期分数
+    - rising / dropping / sustained：两期均有，按 score_delta 符号或零划分
+    """
+    days_recent = max(1, int(days_recent))
+    days_baseline = max(1, int(days_baseline))
+
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH baseline_scoped AS (
+                  SELECT keyword, blue_ocean_score, scanned_at
+                  FROM aso_keywords
+                  WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                    AND scanned_at < DATE_SUB(NOW(), INTERVAL %s DAY)
+                ),
+                baseline_latest AS (
+                  SELECT keyword, blue_ocean_score, scanned_at
+                  FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                      PARTITION BY keyword ORDER BY scanned_at DESC
+                    ) AS rn
+                    FROM baseline_scoped
+                  ) t
+                  WHERE rn = 1
+                ),
+                recent_scoped AS (
+                  SELECT keyword, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
+                         top_reviews, concentration, avg_update_age_months,
+                         trend_gap, rank_change, scanned_at
+                  FROM aso_keywords
+                  WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ),
+                recent_latest AS (
+                  SELECT keyword, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
+                         top_reviews, concentration, avg_update_age_months,
+                         trend_gap, rank_change, scanned_at
+                  FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                      PARTITION BY keyword ORDER BY scanned_at DESC
+                    ) AS rn
+                    FROM recent_scoped
+                  ) t
+                  WHERE rn = 1
+                ),
+                union_scores AS (
+                  SELECT keyword, blue_ocean_score, 0 AS phase
+                  FROM baseline_latest
+                  UNION ALL
+                  SELECT keyword, blue_ocean_score, 1 AS phase
+                  FROM recent_latest
+                ),
+                lagged AS (
+                  SELECT keyword, phase, blue_ocean_score,
+                         LAG(blue_ocean_score) OVER (
+                           PARTITION BY keyword ORDER BY phase
+                         ) AS lag_baseline_score
+                  FROM union_scores
+                )
+                SELECT
+                  rl.keyword,
+                  rl.blue_ocean_score,
+                  rl.blue_ocean_label,
+                  rl.blue_ocean_flags,
+                  rl.top_reviews,
+                  rl.concentration,
+                  rl.avg_update_age_months,
+                  rl.trend_gap,
+                  rl.rank_change,
+                  rl.scanned_at,
+                  lg.lag_baseline_score,
+                  CASE
+                    WHEN lg.lag_baseline_score IS NULL THEN rl.blue_ocean_score
+                    ELSE rl.blue_ocean_score - lg.lag_baseline_score
+                  END AS score_delta
+                FROM recent_latest rl
+                INNER JOIN lagged lg
+                  ON rl.keyword = lg.keyword AND lg.phase = 1
+                """,
+                (
+                    days_recent + days_baseline,
+                    days_recent,
+                    days_recent,
+                ),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+
+        rising: list[dict] = []
+        new_entries: list[dict] = []
+        sustained: list[dict] = []
+        dropping: list[dict] = []
+
+        for r in rows:
+            delta = int(r["score_delta"] or 0)
+            lag_bs = r.get("lag_baseline_score")
+            base_row = {
+                "keyword": r["keyword"],
+                "blue_ocean_score": r["blue_ocean_score"],
+                "blue_ocean_label": r.get("blue_ocean_label"),
+                "blue_ocean_flags": r.get("blue_ocean_flags"),
+                "top_reviews": r.get("top_reviews"),
+                "concentration": r.get("concentration"),
+                "avg_update_age_months": r.get("avg_update_age_months"),
+                "trend_gap": r.get("trend_gap"),
+                "rank_change": r.get("rank_change"),
+                "scanned_at": r.get("scanned_at"),
+            }
+            item = _compare_row_dict(base_row, delta)
+            if lag_bs is None:
+                new_entries.append(item)
+            elif delta > 0:
+                rising.append(item)
+            elif delta < 0:
+                dropping.append(item)
+            else:
+                sustained.append(item)
+
+        return {
+            "rising": rising,
+            "new_entries": new_entries,
+            "sustained": sustained,
+            "dropping": dropping,
+        }
+    except Exception as exc:
+        logger.error("get_compare_analysis 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _compare_row_dict(row: dict, score_delta: int) -> dict:
+    """与 GET /analysis/top 中单条 keyword 对象一致，并附加 score_delta。"""
+    return {
+        "keyword": row["keyword"],
+        "blue_ocean_score": int(row["blue_ocean_score"] or 0),
+        "blue_ocean_label": row.get("blue_ocean_label") or "",
+        "blue_ocean_flags": row.get("blue_ocean_flags") or "",
+        "top_reviews": row.get("top_reviews"),
+        "concentration": float(row["concentration"])
+        if row.get("concentration") is not None
+        else None,
+        "avg_update_age_months": float(row["avg_update_age_months"])
+        if row.get("avg_update_age_months") is not None
+        else None,
+        "trend_gap": float(row["trend_gap"])
+        if row.get("trend_gap") is not None
+        else None,
+        "rank_change": row.get("rank_change"),
+        "scanned_at": row["scanned_at"].strftime("%Y-%m-%d %H:%M:%S")
+        if hasattr(row.get("scanned_at"), "strftime")
+        else str(row.get("scanned_at") or ""),
+        "score_delta": score_delta,
+    }
