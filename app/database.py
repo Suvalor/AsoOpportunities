@@ -7,10 +7,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 import pymysql
+from pymysql import err as pymysql_err
 from pymysql.cursors import DictCursor
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,37 @@ def _get_connection() -> pymysql.connections.Connection:
         cursorclass=DictCursor,
         init_command="SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
     )
+
+
+def _get_connection_for_init() -> pymysql.connections.Connection:
+    """
+    供 init_db 使用：在无法连上 MySQL（如外部库尚未就绪）时按次数退避重试，
+    避免容器一启动就因 Connection refused 退出。
+    """
+    max_retries = max(1, int(os.getenv("MYSQL_INIT_MAX_RETRIES", "30")))
+    retry_sleep = max(0.5, float(os.getenv("MYSQL_INIT_RETRY_SLEEP_SEC", "2")))
+    last_exc: BaseException | None = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            return _get_connection()
+        except pymysql_err.OperationalError as exc:
+            last_exc = exc
+            code = exc.args[0] if exc.args else None
+            # 2003：无法连接服务器（含连接被拒绝）
+            if attempt < max_retries and code == 2003:
+                logger.warning(
+                    "等待 MySQL 就绪：第 %d/%d 次连接失败，%.1f 秒后重试（%s）",
+                    attempt,
+                    max_retries,
+                    retry_sleep,
+                    exc,
+                )
+                time.sleep(retry_sleep)
+            else:
+                raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def init_db() -> None:
@@ -163,7 +196,7 @@ def init_db() -> None:
     """
     conn = None
     try:
-        conn = _get_connection()
+        conn = _get_connection_for_init()
         with conn.cursor() as cur:
             cur.execute(sql_keywords)
             cur.execute(sql_jobs)
