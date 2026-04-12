@@ -35,6 +35,15 @@ from .database import (
 
 logger = logging.getLogger(__name__)
 
+# ===== Anthropic API 配置（全部来自环境变量，默认值仅作本地开发回退）=====
+_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+_ANTHROPIC_BASE_URL = os.getenv(
+    "ANTHROPIC_BASE_URL", "https://api.anthropic.com"
+).rstrip("/")
+_ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+_ANTHROPIC_VERSION = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
+_ANTHROPIC_ENDPOINT = f"{_ANTHROPIC_BASE_URL}/v1/messages"
+
 # 剪枝：本批次内表现过差且矩阵仍保留足够 active 时才剪
 _MIN_ACTIVE_AFTER_PRUNE = 8
 _WEAK_AVG_SCORE = 40.0
@@ -163,44 +172,52 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
         + "\n".join(lines)
     )
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
+    if not _ANTHROPIC_API_KEY:
         print("[Evolution] 错误：ANTHROPIC_API_KEY 未设置，跳过种子生成")
         return [], ""
 
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
+        "x-api-key": _ANTHROPIC_API_KEY,
+        "anthropic-version": _ANTHROPIC_VERSION,
+    }
+
+    payload = {
+        "model": _ANTHROPIC_MODEL,
+        "max_tokens": 1000,
+        "messages": [{"role": "user", "content": user_prompt}],
     }
 
     try:
         response = requests.post(
-            "https://api.anthropic.com/v1/messages",
+            _ANTHROPIC_ENDPOINT,
             headers=headers,
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 1000,
-                "messages": [{"role": "user", "content": user_prompt}],
-            },
+            json=payload,
             timeout=30,
         )
-    except Exception as exc:
-        logger.exception("Anthropic API 调用异常: %s", exc)
-        err = str(exc)[:500]
-        append_evolution_log(
-            batch_id,
-            "generate_new_seeds_failed",
-            {"error": err},
-        )
-        return [], err
+    except requests.exceptions.RequestException as e:
+        print(f"[Evolution] 网络错误：{e}")
+        return [], ""
 
     if response.status_code == 401:
-        print("[Evolution] Anthropic API Key 无效或未设置，跳过种子生成")
+        print(
+            f"[Evolution] API Key 无效（401）"
+            f"，endpoint={_ANTHROPIC_ENDPOINT}"
+            f"，model={_ANTHROPIC_MODEL}"
+        )
         return [], ""
+
+    if response.status_code == 404:
+        print(
+            f"[Evolution] 接口地址不存在（404）"
+            f"，请检查 ANTHROPIC_BASE_URL={_ANTHROPIC_BASE_URL}"
+            f" 和 ANTHROPIC_MODEL={_ANTHROPIC_MODEL}"
+        )
+        return [], ""
+
     if response.status_code != 200:
         print(
-            f"[Evolution] Anthropic API 返回异常: {response.status_code} {response.text[:200]}"
+            f"[Evolution] API 异常 {response.status_code}：{response.text[:300]}"
         )
         return [], ""
 

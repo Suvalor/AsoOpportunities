@@ -40,6 +40,20 @@ def on_startup() -> None:
     init_db()
     logger.info("数据库 init_db 完成")
 
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    masked = (
+        (api_key[:8] + "..." + api_key[-4:]) if len(api_key) > 12 else "未设置"
+    )
+    anthropic_base = os.getenv(
+        "ANTHROPIC_BASE_URL", "https://api.anthropic.com"
+    ).rstrip("/")
+    anthropic_endpoint = f"{anthropic_base}/v1/messages"
+    print(f"[Anthropic] endpoint : {anthropic_endpoint}")
+    print(
+        f"[Anthropic] model    : {os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-20250514')}"
+    )
+    print(f"[Anthropic] api_key  : {masked}")
+
 
 @app.get("/health")
 def health() -> dict:
