@@ -35,10 +35,6 @@ from .database import (
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
-ANTHROPIC_VERSION = "2023-06-01"
-
 # 剪枝：本批次内表现过差且矩阵仍保留足够 active 时才剪
 _MIN_ACTIVE_AFTER_PRUNE = 8
 _WEAK_AVG_SCORE = 40.0
@@ -116,43 +112,6 @@ def prune_weak_seeds(batch_id: str) -> list[str]:
     return to_prune
 
 
-def _call_anthropic_messages(user_text: str) -> tuple[str, str | None]:
-    """调用 Anthropic Messages API，返回 (assistant 文本, 错误说明)。"""
-    api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
-    if not api_key:
-        return "", "missing_ANTHROPIC_API_KEY"
-
-    body: dict[str, Any] = {
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": 2048,
-        "messages": [{"role": "user", "content": user_text}],
-    }
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    try:
-        resp = requests.post(
-            ANTHROPIC_URL,
-            headers=headers,
-            json=body,
-            timeout=120,
-        )
-        if resp.status_code >= 400:
-            return "", f"http_{resp.status_code}:{resp.text[:500]}"
-        data = resp.json()
-        parts = data.get("content") or []
-        texts: list[str] = []
-        for p in parts:
-            if isinstance(p, dict) and p.get("type") == "text":
-                texts.append(str(p.get("text") or ""))
-        return "\n".join(texts).strip(), None
-    except Exception as exc:
-        logger.exception("Anthropic API 调用异常: %s", exc)
-        return "", str(exc)[:500]
-
-
 def _parse_seed_list_from_llm(text: str) -> list[str]:
     """从模型输出中解析 JSON 数组或逐行种子列表。"""
     text = text.strip()
@@ -204,8 +163,66 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
         + "\n".join(lines)
     )
 
-    assistant_text, err = _call_anthropic_messages(user_prompt)
-    if err:
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        print("[Evolution] 错误：ANTHROPIC_API_KEY 未设置，跳过种子生成")
+        return [], ""
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
+
+    try:
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": user_prompt}],
+            },
+            timeout=30,
+        )
+    except Exception as exc:
+        logger.exception("Anthropic API 调用异常: %s", exc)
+        err = str(exc)[:500]
+        append_evolution_log(
+            batch_id,
+            "generate_new_seeds_failed",
+            {"error": err},
+        )
+        return [], err
+
+    if response.status_code == 401:
+        print("[Evolution] Anthropic API Key 无效或未设置，跳过种子生成")
+        return [], ""
+    if response.status_code != 200:
+        print(
+            f"[Evolution] Anthropic API 返回异常: {response.status_code} {response.text[:200]}"
+        )
+        return [], ""
+
+    try:
+        data: Any = response.json()
+    except Exception:
+        err = "invalid_json_response"
+        append_evolution_log(
+            batch_id,
+            "generate_new_seeds_failed",
+            {"error": err},
+        )
+        return [], err
+
+    parts = data.get("content") or []
+    texts: list[str] = []
+    for p in parts:
+        if isinstance(p, dict) and p.get("type") == "text":
+            texts.append(str(p.get("text") or ""))
+    assistant_text = "\n".join(texts).strip()
+    if not assistant_text:
+        err = "empty_assistant_content"
         append_evolution_log(
             batch_id,
             "generate_new_seeds_failed",
