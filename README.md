@@ -102,6 +102,19 @@ curl -X POST http://localhost:8000/scan/start \
   -d '{"mode": "full"}'
 ```
 
+### 种子进化状态页面
+
+服务启动后，访问以下地址查看种子矩阵的实时进化状态：
+
+```
+http://your-server:8000/static/seeds-dashboard.html
+```
+
+输入 API Key 后即可查看：
+- 各状态种子数量统计
+- 待激活种子列表
+- 最近进化事件时间线
+
 ---
 
 **n8n 接入**
@@ -294,6 +307,19 @@ curl -X POST http://localhost:8000/scan/start \
   -H "Content-Type: application/json" \
   -d '{"mode": "full"}'
 ```
+
+### Seed Evolution Status Page
+
+After starting the service, visit the following URL to view real-time seed matrix evolution status:
+
+```
+http://your-server:8000/static/seeds-dashboard.html
+```
+
+Enter your API Key to view:
+- Seed count statistics by status
+- Pending seeds list
+- Recent evolution event timeline
 
 ---
 
