@@ -5,9 +5,11 @@ ASO 蓝海扫描服务 — FastAPI 入口。
 from __future__ import annotations
 
 import logging
+import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
 from .routers import analysis, scan, seeds
@@ -26,6 +28,10 @@ app = FastAPI(title="ASO 蓝海关键词服务", version="1.0.0")
 app.include_router(scan.router)
 app.include_router(analysis.router)
 app.include_router(seeds.router)
+
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.on_event("startup")
