@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASO Keyword Engine</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  background:#0f1117;
+  color:#e1e4eb;
+  font-family:system-ui,-apple-system,sans-serif;
+  display:flex;
+  flex-direction:column;
+}
+.navbar{
+  display:flex;
+  align-items:center;
+  gap:0;
+  background:#1a1d27;
+  border-bottom:1px solid #2d3148;
+  padding:0 16px;
+  flex-shrink:0;
+  height:48px;
+}
+.nav-brand{
+  font-size:16px;
+  font-weight:700;
+  margin-right:24px;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.nav-tabs{
+  display:flex;
+  gap:0;
+  height:100%;
+  align-items:stretch;
+}
+.nav-tab{
+  display:flex;
+  align-items:center;
+  padding:0 18px;
+  font-size:14px;
+  color:#8b8fa3;
+  cursor:pointer;
+  border-bottom:2px solid transparent;
+  transition:color .15s, border-color .15s;
+  white-space:nowrap;
+  user-select:none;
+  background:none;
+  border-top:none;
+  border-left:none;
+  border-right:none;
+  font-family:inherit;
+}
+.nav-tab:hover{color:#e1e4eb}
+.nav-tab.active{color:#4f8ef7;border-bottom-color:#4f8ef7}
+.nav-right{
+  margin-left:auto;
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.nav-user{font-size:13px;color:#8b8fa3}
+.btn-logout{
+  background:transparent;
+  color:#e55353;
+  border:1px solid #e55353;
+  padding:5px 14px;
+  border-radius:5px;
+  font-size:12px;
+  cursor:pointer;
+  transition:all .15s;
+  font-family:inherit;
+}
+.btn-logout:hover{background:rgba(229,83,83,.1)}
+.main-frame{
+  flex:1;
+  border:none;
+  width:100%;
+}
+</style>
+</head>
+<body>
+<nav class="navbar">
+  <div class="nav-brand">🌱 ASO Engine</div>
+  <div class="nav-tabs" id="navTabs">
+    <button class="nav-tab active" data-src="/static/seeds-dashboard.html">种子进化</button>
+    <button class="nav-tab" data-src="/static/keyword-insights.html">关键词洞察</button>
+  </div>
+  <div class="nav-right">
+    <span class="nav-user" id="navUser"></span>
+    <button class="btn-logout" onclick="doLogout()">退出</button>
+  </div>
+</nav>
+<iframe class="main-frame" id="mainFrame" src="/static/seeds-dashboard.html"></iframe>
+
+<script>
+(function(){
+  'use strict';
+
+  const tabs = document.querySelectorAll('.nav-tab');
+  const frame = document.getElementById('mainFrame');
+  const navTabs = document.getElementById('navTabs');
+
+  function switchTab(tab) {
+    tabs.forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    frame.src = tab.dataset.src;
+  }
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => switchTab(tab));
+  });
+
+  async function checkAuth() {
+    try {
+      const resp = await fetch('/auth/me');
+      if (!resp.ok) {
+        window.location.href = '/static/index.html';
+        return;
+      }
+      const data = await resp.json();
+      document.getElementById('navUser').textContent = data.username + '（' + (data.role === 'admin' ? '管理员' : '观察者') + '）';
+
+      if (data.role === 'admin') {
+        const agentTab = document.createElement('button');
+        agentTab.className = 'nav-tab';
+        agentTab.dataset.src = '/static/agents.html';
+        agentTab.textContent = '智能体管理';
+        agentTab.addEventListener('click', () => switchTab(agentTab));
+        navTabs.appendChild(agentTab);
+      }
+    } catch(e) {
+      window.location.href = '/static/index.html';
+    }
+  }
+
+  window.doLogout = async function() {
+    try { await fetch('/auth/logout', {method:'POST'}); } catch(e) {}
+    window.location.href = '/static/index.html';
+  };
+
+  checkAuth();
+})();
+</script>
+</body>
+</html>

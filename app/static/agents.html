@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能体管理</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#0f1117;
+  color:#e1e4eb;
+  font-family:system-ui,-apple-system,sans-serif;
+  line-height:1.6;
+  min-height:100vh;
+  padding:0 16px 40px;
+}
+a{color:#4f8ef7;text-decoration:none}
+.container{max-width:960px;margin:0 auto}
+
+.header{
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  padding:20px 0 16px;border-bottom:1px solid #2d3148;margin-bottom:20px;
+}
+.header-title{font-size:20px;font-weight:700;white-space:nowrap}
+.btn{
+  background:#4f8ef7;color:#fff;border:none;padding:7px 16px;border-radius:6px;
+  font-size:14px;cursor:pointer;white-space:nowrap;transition:opacity .15s;font-family:inherit;
+}
+.btn:hover{opacity:.85}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-sm{padding:4px 12px;font-size:12px;border-radius:4px}
+.btn-danger{background:#e55353}
+.btn-green{background:#3ecf8e}
+.btn-outline{background:transparent;color:#4f8ef7;border:1px solid #4f8ef7}
+.btn-outline:hover{background:rgba(79,142,247,.1)}
+
+.alert{padding:10px 16px;border-radius:6px;font-size:14px;margin-bottom:16px;display:none}
+.alert-error{background:rgba(229,83,83,.12);border:1px solid #e55353;color:#e55353}
+.alert-success{background:rgba(62,207,142,.10);border:1px solid #3ecf8e;color:#3ecf8e}
+
+.section{margin-bottom:28px}
+.section-title{font-size:16px;font-weight:600;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #2d3148}
+
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;padding:10px 12px;background:#161923;color:#8b8fa3;font-weight:600;white-space:nowrap;border-bottom:1px solid #2d3148}
+td{padding:10px 12px;border-bottom:1px solid #1e2236;vertical-align:top}
+tr:hover td{background:rgba(79,142,247,.04)}
+.mono{font-family:monospace;font-size:13px;color:#8b8fa3}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}
+.badge-active{background:rgba(62,207,142,.15);color:#3ecf8e}
+.badge-inactive{background:rgba(229,83,83,.12);color:#e55353}
+.empty{text-align:center;padding:32px 16px;color:#5e6278;font-size:14px}
+
+.assign-row{
+  display:flex;align-items:center;gap:12px;padding:12px 0;
+  border-bottom:1px solid #1e2236;flex-wrap:wrap;
+}
+.assign-label{font-size:14px;font-weight:600;min-width:140px}
+.assign-select{
+  flex:1;min-width:200px;padding:8px 12px;background:#0f1117;border:1px solid #2d3148;
+  border-radius:6px;color:#e1e4eb;font-size:14px;outline:none;font-family:inherit;
+}
+.assign-select:focus{border-color:#4f8ef7}
+
+/* 弹窗 */
+.modal-overlay{
+  display:none;position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;
+}
+.modal-overlay.open{display:flex}
+.modal{
+  background:#1a1d27;border:1px solid #2d3148;border-radius:12px;
+  padding:28px 24px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;
+}
+.modal-title{font-size:18px;font-weight:700;margin-bottom:20px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:#8b8fa3}
+.form-group input{
+  width:100%;padding:9px 12px;background:#0f1117;border:1px solid #2d3148;
+  border-radius:6px;color:#e1e4eb;font-size:14px;outline:none;font-family:inherit;
+}
+.form-group input:focus{border-color:#4f8ef7}
+.form-hint{font-size:12px;color:#5e6278;margin-top:3px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="header-title">🤖 智能体管理</div>
+    <button class="btn btn-green" onclick="openCreateModal()">+ 新建智能体</button>
+  </div>
+
+  <div class="alert alert-error" id="alertError"></div>
+  <div class="alert alert-success" id="alertSuccess"></div>
+
+  <div class="section">
+    <div class="section-title">智能体列表</div>
+    <div id="agentTable"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">🔗 用途分配</div>
+    <div id="assignArea"></div>
+    <div style="margin-top:14px;text-align:right">
+      <button class="btn" id="btnSaveAssign" onclick="saveAssignments()">保存分配</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新建/编辑弹窗 -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-title" id="modalTitle">新建智能体</div>
+    <input type="hidden" id="editId">
+    <div class="form-group">
+      <label>名称</label>
+      <input type="text" id="fName" placeholder="如 Claude Sonnet">
+    </div>
+    <div class="form-group">
+      <label>Base URL</label>
+      <input type="text" id="fBaseUrl" placeholder="https://api.anthropic.com">
+    </div>
+    <div class="form-group">
+      <label>API Key</label>
+      <input type="password" id="fApiKey" placeholder="sk-ant-...">
+      <div class="form-hint" id="fApiKeyHint"></div>
+    </div>
+    <div class="form-group">
+      <label>Model</label>
+      <input type="text" id="fModel" placeholder="claude-sonnet-4-20250514">
+    </div>
+    <div class="form-group">
+      <label>Version</label>
+      <input type="text" id="fVersion" value="2023-06-01">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal()">取消</button>
+      <button class="btn" id="btnModalSave" onclick="saveAgent()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  let agentsList = [];
+  let assignData = {};
+
+  function $(id){return document.getElementById(id)}
+  function showError(m){const e=$('alertError');e.textContent=m;e.style.display='block';$('alertSuccess').style.display='none'}
+  function showSuccess(m){const e=$('alertSuccess');e.textContent=m;e.style.display='block';$('alertError').style.display='none';setTimeout(()=>{e.style.display='none'},4000)}
+  function hideAlerts(){$('alertError').style.display='none';$('alertSuccess').style.display='none'}
+
+  function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+  function fmtDt(s){if(!s)return'-';const m=s.match(/\d{4}-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);return m?m[1]+'-'+m[2]+' '+m[3]+':'+m[4]:s}
+
+  async function checkAuth(){
+    try{
+      const r=await fetch('/auth/me');
+      if(!r.ok){window.top.location.href='/static/index.html';return false}
+      const d=await r.json();
+      if(d.role!=='admin'){document.body.innerHTML='<div class="empty">需要管理员权限</div>';return false}
+      return true;
+    }catch(e){window.top.location.href='/static/index.html';return false}
+  }
+
+  async function loadAgents(){
+    try{
+      const r=await fetch('/agents');
+      if(!r.ok){showError('加载智能体列表失败');return}
+      const d=await r.json();
+      agentsList=d.items||[];
+      renderTable();
+    }catch(e){showError('无法连接服务')}
+  }
+
+  async function loadAssignments(){
+    try{
+      const r=await fetch('/agents/assignments');
+      if(!r.ok)return;
+      assignData=await r.json();
+      renderAssignments();
+    }catch(e){}
+  }
+
+  function renderTable(){
+    const w=$('agentTable');
+    if(!agentsList.length){w.innerHTML='<div class="empty">暂无智能体，请点击「新建智能体」</div>';return}
+    let h='<div class="table-wrap"><table><thead><tr><th>ID</th><th>名称</th><th>API Key</th><th>模型</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>';
+    for(const a of agentsList){
+      const badge=a.is_active?'<span class="badge badge-active">启用</span>':'<span class="badge badge-inactive">停用</span>';
+      h+='<tr>'
+        +'<td>'+a.id+'</td>'
+        +'<td>'+escapeHtml(a.name)+'</td>'
+        +'<td class="mono">'+escapeHtml(a.api_key_preview)+'</td>'
+        +'<td class="mono">'+escapeHtml(a.model)+'</td>'
+        +'<td>'+badge+'</td>'
+        +'<td class="mono">'+fmtDt(a.updated_at)+'</td>'
+        +'<td><button class="btn btn-sm btn-outline" onclick="openEditModal('+a.id+')">编辑</button> '
+        +'<button class="btn btn-sm btn-danger" onclick="deleteAgent('+a.id+')">删除</button></td>'
+        +'</tr>';
+    }
+    h+='</tbody></table></div>';
+    w.innerHTML=h;
+  }
+
+  function renderAssignments(){
+    const w=$('assignArea');
+    const usages=[
+      {key:'seed_evolution',label:'种子进化'},
+      {key:'keyword_report',label:'关键词推荐报告'}
+    ];
+    let h='';
+    for(const u of usages){
+      const cur=assignData[u.key];
+      const curId=cur?cur.agent_id:0;
+      h+='<div class="assign-row">'
+        +'<span class="assign-label">'+u.label+'</span>'
+        +'<select class="assign-select" id="assign_'+u.key+'">'
+        +'<option value="">— 未分配 —</option>';
+      for(const a of agentsList){
+        const sel=a.id===curId?' selected':'';
+        h+='<option value="'+a.id+'"'+sel+'>'+escapeHtml(a.name)+' ('+escapeHtml(a.model)+')</option>';
+      }
+      h+='</select></div>';
+    }
+    w.innerHTML=h;
+  }
+
+  window.openCreateModal=function(){
+    $('modalTitle').textContent='新建智能体';
+    $('editId').value='';
+    $('fName').value='';$('fBaseUrl').value='https://api.anthropic.com';
+    $('fApiKey').value='';$('fApiKey').placeholder='sk-ant-...';
+    $('fApiKeyHint').textContent='';
+    $('fModel').value='';$('fVersion').value='2023-06-01';
+    $('modalOverlay').classList.add('open');
+  };
+
+  window.openEditModal=function(id){
+    const a=agentsList.find(x=>x.id===id);
+    if(!a)return;
+    $('modalTitle').textContent='编辑智能体 #'+id;
+    $('editId').value=id;
+    $('fName').value=a.name;$('fBaseUrl').value=a.base_url;
+    $('fApiKey').value='';$('fApiKey').placeholder='留空则不修改密钥';
+    $('fApiKeyHint').textContent='当前密钥：'+a.api_key_preview;
+    $('fModel').value=a.model;$('fVersion').value=a.version||'2023-06-01';
+    $('modalOverlay').classList.add('open');
+  };
+
+  window.closeModal=function(){$('modalOverlay').classList.remove('open')};
+
+  window.saveAgent=async function(){
+    hideAlerts();
+    const id=$('editId').value;
+    const isEdit=!!id;
+    const body={};
+    body.name=$('fName').value.trim();
+    body.base_url=$('fBaseUrl').value.trim();
+    body.model=$('fModel').value.trim();
+    body.version=$('fVersion').value.trim()||'2023-06-01';
+    const apiKey=$('fApiKey').value.trim();
+
+    if(!body.name||!body.base_url||!body.model){showError('名称、Base URL、Model 必填');return}
+    if(!isEdit&&!apiKey){showError('新建智能体时 API Key 必填');return}
+
+    if(apiKey)body.api_key=apiKey;
+
+    const btn=$('btnModalSave');btn.disabled=true;
+    try{
+      const url=isEdit?'/agents/'+id:'/agents';
+      const method=isEdit?'PUT':'POST';
+      const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();
+      if(!r.ok){showError(d.detail||'操作失败');return}
+      closeModal();
+      showSuccess(isEdit?'智能体已更新':'智能体已创建');
+      await loadAgents();
+      renderAssignments();
+    }catch(e){showError('请求失败')}finally{btn.disabled=false}
+  };
+
+  window.deleteAgent=async function(id){
+    if(!confirm('确认删除智能体 #'+id+'？'))return;
+    hideAlerts();
+    try{
+      const r=await fetch('/agents/'+id,{method:'DELETE'});
+      const d=await r.json();
+      if(!r.ok){showError(d.detail||'删除失败');return}
+      showSuccess('已删除');
+      await loadAgents();
+      await loadAssignments();
+    }catch(e){showError('请求失败')}
+  };
+
+  window.saveAssignments=async function(){
+    hideAlerts();
+    const body={};
+    const se=$('assign_seed_evolution');
+    const kr=$('assign_keyword_report');
+    if(se&&se.value)body.seed_evolution=parseInt(se.value);
+    if(kr&&kr.value)body.keyword_report=parseInt(kr.value);
+
+    if(!body.seed_evolution&&!body.keyword_report){showError('请至少选择一项分配');return}
+
+    const btn=$('btnSaveAssign');btn.disabled=true;
+    try{
+      const r=await fetch('/agents/assignments',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();
+      if(!r.ok){showError(d.detail||'保存失败');return}
+      assignData=d;
+      showSuccess('分配已保存');
+      renderAssignments();
+    }catch(e){showError('请求失败')}finally{btn.disabled=false}
+  };
+
+  // 点击弹窗外关闭
+  $('modalOverlay').addEventListener('click',function(e){
+    if(e.target===this)closeModal();
+  });
+
+  (async function init(){
+    const ok=await checkAuth();
+    if(!ok)return;
+    await loadAgents();
+    await loadAssignments();
+  })();
+})();
+</script>
+</body>
+</html>
