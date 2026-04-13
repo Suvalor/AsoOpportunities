@@ -9,10 +9,11 @@ import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from .database import init_db
-from .routers import analysis, scan, seeds
+from .database import get_user_count, init_db
+from .routers import agents, analysis, auth_router, report, scan, seeds
 
 load_dotenv()
 
@@ -28,6 +29,9 @@ app = FastAPI(title="ASO 蓝海关键词服务", version="1.0.0")
 app.include_router(scan.router)
 app.include_router(analysis.router)
 app.include_router(seeds.router)
+app.include_router(report.router)
+app.include_router(auth_router.router)
+app.include_router(agents.router)
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
@@ -40,19 +44,20 @@ def on_startup() -> None:
     init_db()
     logger.info("数据库 init_db 完成")
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    masked = (
-        (api_key[:8] + "..." + api_key[-4:]) if len(api_key) > 12 else "未设置"
-    )
-    anthropic_base = os.getenv(
-        "ANTHROPIC_BASE_URL", "https://api.anthropic.com"
-    ).rstrip("/")
-    anthropic_endpoint = f"{anthropic_base}/v1/messages"
-    print(f"[Anthropic] endpoint : {anthropic_endpoint}")
-    print(
-        f"[Anthropic] model    : {os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-20250514')}"
-    )
-    print(f"[Anthropic] api_key  : {masked}")
+    try:
+        if get_user_count() == 0:
+            print("=" * 50)
+            print("[初始化] 系统尚无用户，请访问以下地址完成注册：")
+            print("  http://localhost:8000/static/index.html")
+            print("  首个注册用户将自动成为管理员")
+            print("=" * 50)
+    except Exception:
+        pass
+
+
+@app.get("/")
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/static/index.html")
 
 
 @app.get("/health")

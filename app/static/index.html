@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASO Keyword Engine — 登录</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#0f1117;
+  color:#e1e4eb;
+  font-family:system-ui,-apple-system,sans-serif;
+  line-height:1.6;
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+.card{
+  background:#1a1d27;
+  border:1px solid #2d3148;
+  border-radius:12px;
+  padding:36px 32px;
+  width:100%;
+  max-width:380px;
+}
+.card-title{
+  font-size:22px;
+  font-weight:700;
+  text-align:center;
+  margin-bottom:24px;
+}
+.form-group{margin-bottom:16px}
+.form-group label{
+  display:block;
+  font-size:14px;
+  font-weight:600;
+  margin-bottom:6px;
+  color:#8b8fa3;
+}
+.form-group input{
+  width:100%;
+  padding:10px 14px;
+  background:#0f1117;
+  border:1px solid #2d3148;
+  border-radius:6px;
+  color:#e1e4eb;
+  font-size:14px;
+  outline:none;
+}
+.form-group input:focus{border-color:#4f8ef7}
+.btn{
+  width:100%;
+  background:#4f8ef7;
+  color:#fff;
+  border:none;
+  padding:10px 16px;
+  border-radius:6px;
+  font-size:15px;
+  font-weight:600;
+  cursor:pointer;
+  transition:opacity .15s;
+  margin-top:8px;
+}
+.btn:hover{opacity:.85}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.switch-link{
+  text-align:center;
+  margin-top:16px;
+  font-size:13px;
+  color:#8b8fa3;
+}
+.switch-link a{
+  color:#4f8ef7;
+  cursor:pointer;
+  text-decoration:none;
+}
+.switch-link a:hover{text-decoration:underline}
+.alert{
+  padding:8px 12px;
+  border-radius:6px;
+  font-size:13px;
+  margin-bottom:12px;
+  display:none;
+}
+.alert-error{background:rgba(229,83,83,.12);border:1px solid #e55353;color:#e55353}
+.alert-success{background:rgba(62,207,142,.10);border:1px solid #3ecf8e;color:#3ecf8e}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="card-title" id="formTitle">🌱 ASO Keyword Engine</div>
+  <div class="alert alert-error" id="alertError"></div>
+  <div class="alert alert-success" id="alertSuccess"></div>
+
+  <form id="authForm" onsubmit="return handleSubmit(event)">
+    <div class="form-group">
+      <label for="username">用户名</label>
+      <input type="text" id="username" placeholder="3-32位，字母数字下划线" autocomplete="username" required>
+    </div>
+    <div class="form-group">
+      <label for="password">密码</label>
+      <input type="password" id="password" placeholder="至少8位" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn" id="btnSubmit">登录</button>
+  </form>
+
+  <div class="switch-link" id="switchLink">
+    没有账号？<a onclick="toggleMode()">注册</a>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  let isLogin = true;
+
+  const $ = id => document.getElementById(id);
+
+  function showError(msg) { const el=$('alertError');el.textContent=msg;el.style.display='block';$('alertSuccess').style.display='none'; }
+  function showSuccess(msg) { const el=$('alertSuccess');el.textContent=msg;el.style.display='block';$('alertError').style.display='none'; }
+  function hideAlerts() { $('alertError').style.display='none';$('alertSuccess').style.display='none'; }
+
+  window.toggleMode = function() {
+    isLogin = !isLogin;
+    hideAlerts();
+    $('btnSubmit').textContent = isLogin ? '登录' : '注册';
+    $('switchLink').innerHTML = isLogin
+      ? '没有账号？<a onclick="toggleMode()">注册</a>'
+      : '已有账号？<a onclick="toggleMode()">登录</a>';
+    $('password').autocomplete = isLogin ? 'current-password' : 'new-password';
+  };
+
+  window.handleSubmit = async function(e) {
+    e.preventDefault();
+    hideAlerts();
+    const username = $('username').value.trim();
+    const password = $('password').value;
+    if (!username || !password) { showError('请填写用户名和密码'); return false; }
+
+    const btn = $('btnSubmit');
+    btn.disabled = true;
+
+    const url = isLogin ? '/auth/login' : '/auth/register';
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username, password}),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        showError(data.detail || '操作失败');
+        return false;
+      }
+      if (isLogin) {
+        window.location.href = '/static/dashboard.html';
+      } else {
+        showSuccess('注册成功（角色：' + data.role + '），正在跳转登录...');
+        setTimeout(() => { isLogin = true; toggleMode(); }, 1500);
+      }
+    } catch(err) {
+      showError('无法连接到服务');
+    } finally {
+      btn.disabled = false;
+    }
+    return false;
+  };
+
+  // 已登录则直接跳转
+  fetch('/auth/me').then(r => { if(r.ok) window.location.href='/static/dashboard.html'; }).catch(()=>{});
+})();
+</script>
+</body>
+</html>

@@ -4,6 +4,7 @@ MySQL 8.0 持久化：建表、任务状态、关键词批量写入、查询。
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -12,10 +13,31 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pymysql
+from cryptography.fernet import Fernet
 from pymysql import err as pymysql_err
 from pymysql.cursors import DictCursor
 
 logger = logging.getLogger(__name__)
+
+
+# ===================== 智能体 API Key 加解密 =====================
+
+
+def _get_fernet() -> Fernet:
+    key = os.getenv("AGENT_ENCRYPT_KEY", "")
+    if len(key) != 64:
+        raise ValueError("AGENT_ENCRYPT_KEY 必须是64位hex字符串")
+    raw = bytes.fromhex(key)
+    b64 = base64.urlsafe_b64encode(raw)
+    return Fernet(b64)
+
+
+def encrypt_api_key(plain: str) -> str:
+    return _get_fernet().encrypt(plain.encode()).decode()
+
+
+def decrypt_api_key(cipher: str) -> str:
+    return _get_fernet().decrypt(cipher.encode()).decode()
 
 
 def bootstrap_default_seeds_if_empty() -> None:
@@ -194,6 +216,58 @@ def init_db() -> None:
       DEFAULT CHARSET=utf8mb4
       COLLATE=utf8mb4_unicode_ci
     """
+    sql_reports = """
+    CREATE TABLE IF NOT EXISTS aso_analysis_reports (
+      id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      report_md        LONGTEXT     NOT NULL,
+      triggered_by     ENUM('auto_threshold','manual','weekly_full')
+                       DEFAULT 'auto_threshold',
+      keyword_count    INT          DEFAULT 0,
+      new_gold_count   INT          DEFAULT 0,
+      score_delta_sum  FLOAT        DEFAULT 0,
+      keywords_json    JSON,
+      prompt_version   INT UNSIGNED DEFAULT 1,
+      created_at       DATETIME     NOT NULL,
+      INDEX idx_created (created_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """
+    sql_users = """
+    CREATE TABLE IF NOT EXISTS aso_users (
+      id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      username      VARCHAR(64)   NOT NULL UNIQUE,
+      password_hash VARCHAR(255)  NOT NULL,
+      role          ENUM('admin','viewer') DEFAULT 'viewer',
+      created_at    DATETIME      NOT NULL,
+      last_login_at DATETIME,
+      INDEX idx_username (username)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """
+    sql_agents = """
+    CREATE TABLE IF NOT EXISTS aso_agents (
+      id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      name            VARCHAR(100)  NOT NULL,
+      base_url        VARCHAR(500)  NOT NULL,
+      api_key_enc     TEXT          NOT NULL,
+      api_key_preview VARCHAR(20)   NOT NULL,
+      model           VARCHAR(100)  NOT NULL,
+      version         VARCHAR(50)   DEFAULT '2023-06-01',
+      is_active       TINYINT(1)    DEFAULT 1,
+      created_at      DATETIME      NOT NULL,
+      updated_at      DATETIME      NOT NULL,
+      INDEX idx_active (is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """
+    sql_assignments = """
+    CREATE TABLE IF NOT EXISTS aso_agent_assignments (
+      id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      `usage`       ENUM('seed_evolution','keyword_report') NOT NULL UNIQUE,
+      agent_id      INT UNSIGNED NOT NULL,
+      updated_at    DATETIME NOT NULL,
+      FOREIGN KEY (agent_id) REFERENCES aso_agents(id)
+        ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """
+
     conn = None
     try:
         conn = _get_connection_for_init()
@@ -202,6 +276,10 @@ def init_db() -> None:
             cur.execute(sql_jobs)
             cur.execute(sql_seeds)
             cur.execute(sql_evolution_log)
+            cur.execute(sql_reports)
+            cur.execute(sql_users)
+            cur.execute(sql_agents)
+            cur.execute(sql_assignments)
         conn.commit()
 
         _new_columns = [
@@ -988,3 +1066,493 @@ def _compare_row_dict(row: dict, score_delta: int) -> dict:
         "reddit_post_count": int(row.get("reddit_post_count") or 0),
         "reddit_avg_score": float(row.get("reddit_avg_score") or 0),
     }
+
+
+# ===================== 报告相关查询 =====================
+
+
+def get_latest_report() -> dict | None:
+    """返回最新一份报告（不含 keywords_json）；不存在时返回 None。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, report_md, triggered_by, keyword_count,
+                       new_gold_count, score_delta_sum, prompt_version, created_at
+                FROM aso_analysis_reports
+                ORDER BY id DESC LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_latest_report 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_report_history(limit: int = 20) -> list[dict]:
+    """返回历史报告列表（不含 report_md 全文）。"""
+    limit = min(max(limit, 1), 50)
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, triggered_by, keyword_count, new_gold_count,
+                       score_delta_sum, prompt_version, created_at
+                FROM aso_analysis_reports
+                ORDER BY id DESC LIMIT %s
+                """,
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_report_history 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_report_by_id(report_id: int) -> dict | None:
+    """按 id 返回报告全文；不存在返回 None。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM aso_analysis_reports WHERE id = %s",
+                (report_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_report_by_id 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_report(data: dict) -> int:
+    """插入一条报告，返回新记录 id。"""
+    kw_json = data.get("keywords_json")
+    if isinstance(kw_json, (list, dict)):
+        kw_json = json.dumps(kw_json, ensure_ascii=False)
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_analysis_reports
+                  (report_md, triggered_by, keyword_count, new_gold_count,
+                   score_delta_sum, keywords_json, prompt_version, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    data["report_md"],
+                    data.get("triggered_by", "auto_threshold"),
+                    int(data.get("keyword_count", 0)),
+                    int(data.get("new_gold_count", 0)),
+                    float(data.get("score_delta_sum", 0)),
+                    kw_json,
+                    int(data.get("prompt_version", 1)),
+                    data.get("created_at", datetime.now(timezone.utc).replace(tzinfo=None)),
+                ),
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+        return new_id
+    except Exception as exc:
+        logger.error("insert_report 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
+    """
+    返回 (top_keywords, new_keywords)：
+    - top_keywords: 最近14天 blue_ocean_score >= 60 的词，按 peak_score 降序，最多100条
+    - new_keywords: 7天内首次出现的高分词关键词名列表
+    """
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    keyword,
+                    MAX(blue_ocean_score)      AS peak_score,
+                    MAX(blue_ocean_label)      AS label,
+                    MAX(blue_ocean_flags)      AS flags,
+                    MAX(top_reviews)           AS top_reviews,
+                    MAX(concentration)         AS concentration,
+                    MAX(avg_update_age_months) AS avg_update_age_months,
+                    MAX(trend_gap)             AS trend_gap,
+                    MAX(rank_change)           AS rank_change,
+                    MAX(cross_platform)        AS cross_platform,
+                    MAX(trends_rising)         AS trends_rising,
+                    COUNT(DISTINCT DATE(scanned_at)) AS days_seen,
+                    MIN(scanned_at)            AS first_seen,
+                    MAX(scanned_at)            AS last_seen
+                FROM aso_keywords
+                WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+                  AND blue_ocean_score >= 60
+                GROUP BY keyword
+                ORDER BY peak_score DESC
+                LIMIT 100
+                """
+            )
+            top_keywords = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT DISTINCT keyword FROM aso_keywords
+                WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                  AND blue_ocean_score >= 60
+                  AND keyword NOT IN (
+                      SELECT DISTINCT keyword FROM aso_keywords
+                      WHERE scanned_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+                  )
+                """
+            )
+            new_keywords = [str(r["keyword"]) for r in cur.fetchall()]
+
+            return top_keywords, new_keywords
+    except Exception as exc:
+        logger.error("get_keyword_snapshot_for_report 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_recent_score_delta_sum(days: int = 7) -> float:
+    """近 N 天内各关键词 blue_ocean_score 变化绝对值之和。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(ABS(score_delta)), 0) AS total_delta
+                FROM (
+                    SELECT
+                        keyword,
+                        blue_ocean_score - LAG(blue_ocean_score)
+                            OVER (PARTITION BY keyword ORDER BY scanned_at) AS score_delta
+                    FROM aso_keywords
+                    WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ) t
+                WHERE score_delta IS NOT NULL
+                """,
+                (days,),
+            )
+            row = cur.fetchone()
+            return float(row["total_delta"]) if row else 0.0
+    except Exception as exc:
+        logger.error("get_recent_score_delta_sum 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# ===================== 用户相关 =====================
+
+
+def create_user(username: str, password_hash: str, role: str = "viewer") -> int:
+    """插入新用户，返回 id。username 重复时由调用方捕获 IntegrityError。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_users (username, password_hash, role, created_at)
+                VALUES (%s, %s, %s, NOW())
+                """,
+                (username, password_hash, role),
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+        return new_id
+    except Exception as exc:
+        logger.error("create_user 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_user_by_username(username: str) -> dict | None:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM aso_users WHERE username = %s",
+                (username,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_user_by_username 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_user_count() -> int:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM aso_users")
+            row = cur.fetchone()
+            return int(row["c"]) if row else 0
+    except Exception as exc:
+        logger.error("get_user_count 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_last_login(user_id: int) -> None:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE aso_users SET last_login_at = NOW() WHERE id = %s",
+                (user_id,),
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.error("update_last_login 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# ===================== 智能体相关 =====================
+
+
+def get_all_agents() -> list[dict]:
+    """列出所有智能体（不含 api_key_enc）。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, base_url, api_key_preview, model, version,
+                       is_active, created_at, updated_at
+                FROM aso_agents ORDER BY id ASC
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_all_agents 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_agent_by_id(agent_id: int) -> dict | None:
+    """按 id 返回智能体（含 api_key_enc，仅供内部调用）。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM aso_agents WHERE id = %s",
+                (agent_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_agent_by_id 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_agent(data: dict) -> int:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_agents
+                  (name, base_url, api_key_enc, api_key_preview, model, version,
+                   is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                """,
+                (
+                    data["name"],
+                    data["base_url"],
+                    data["api_key_enc"],
+                    data["api_key_preview"],
+                    data["model"],
+                    data.get("version", "2023-06-01"),
+                    1 if data.get("is_active", True) else 0,
+                ),
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+        return new_id
+    except Exception as exc:
+        logger.error("insert_agent 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_agent(agent_id: int, data: dict) -> None:
+    """更新智能体，data 中不含 api_key_enc 时不更新密钥。"""
+    set_parts: list[str] = []
+    params: list[Any] = []
+    for field in ("name", "base_url", "model", "version"):
+        if field in data:
+            set_parts.append(f"{field}=%s")
+            params.append(data[field])
+    if "api_key_enc" in data:
+        set_parts.append("api_key_enc=%s")
+        params.append(data["api_key_enc"])
+        set_parts.append("api_key_preview=%s")
+        params.append(data["api_key_preview"])
+    if "is_active" in data:
+        set_parts.append("is_active=%s")
+        params.append(1 if data["is_active"] else 0)
+    set_parts.append("updated_at=NOW()")
+    if not set_parts:
+        return
+    params.append(agent_id)
+    sql = f"UPDATE aso_agents SET {', '.join(set_parts)} WHERE id=%s"
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+        conn.commit()
+    except Exception as exc:
+        logger.error("update_agent 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def delete_agent(agent_id: int) -> None:
+    """删除智能体。若被 aso_agent_assignments 引用则抛出 ValueError。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM aso_agent_assignments WHERE agent_id=%s",
+                (agent_id,),
+            )
+            row = cur.fetchone()
+            if row and int(row["c"]) > 0:
+                raise ValueError("该智能体已被用途分配引用，请先解除分配再删除")
+            cur.execute("DELETE FROM aso_agents WHERE id=%s", (agent_id,))
+        conn.commit()
+    except ValueError:
+        raise
+    except Exception as exc:
+        logger.error("delete_agent 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# ===================== 用途分配 =====================
+
+
+def get_assignment(usage: str) -> dict | None:
+    """查询指定用途对应的智能体配置（含 api_key_enc）。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.* FROM aso_agent_assignments aa
+                JOIN aso_agents a ON a.id = aa.agent_id
+                WHERE aa.`usage` = %s
+                """,
+                (usage,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_assignment 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def set_assignment(usage: str, agent_id: int) -> None:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_agent_assignments (`usage`, agent_id, updated_at)
+                VALUES (%s, %s, NOW())
+                ON DUPLICATE KEY UPDATE agent_id=%s, updated_at=NOW()
+                """,
+                (usage, agent_id, agent_id),
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.error("set_assignment 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_all_assignments() -> list[dict]:
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT aa.`usage`, aa.agent_id, a.name AS agent_name,
+                       a.model, a.is_active, aa.updated_at
+                FROM aso_agent_assignments aa
+                JOIN aso_agents a ON a.id = aa.agent_id
+                ORDER BY aa.`usage`
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_all_assignments 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()

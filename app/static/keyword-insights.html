@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASO 关键词洞察报告</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#0f1117;
+  color:#e1e4eb;
+  font-family:system-ui,-apple-system,sans-serif;
+  line-height:1.6;
+  min-height:100vh;
+  padding:0 16px 40px;
+}
+a{color:#4f8ef7;text-decoration:none}
+
+.container{max-width:960px;margin:0 auto}
+
+.header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:12px;
+  padding:20px 0 16px;
+  border-bottom:1px solid #2d3148;
+  margin-bottom:20px;
+}
+.header-title{font-size:20px;font-weight:700;white-space:nowrap}
+.header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.header-time{font-size:13px;color:#8b8fa3;font-family:monospace}
+.btn{
+  background:#4f8ef7;
+  color:#fff;
+  border:none;
+  padding:7px 16px;
+  border-radius:6px;
+  font-size:14px;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:opacity .15s;
+}
+.btn:hover{opacity:.85}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-generate{background:#3ecf8e}
+.btn-generate.highlight{background:#f5a623;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+
+.auth-bar{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  padding:14px 16px;
+  background:#1a1d27;
+  border:1px solid #2d3148;
+  border-radius:8px;
+  margin-bottom:20px;
+}
+.auth-bar label{font-size:14px;font-weight:600;white-space:nowrap}
+.auth-bar input{
+  flex:1;
+  min-width:180px;
+  padding:7px 12px;
+  background:#0f1117;
+  border:1px solid #2d3148;
+  border-radius:6px;
+  color:#e1e4eb;
+  font-size:14px;
+  font-family:monospace;
+  outline:none;
+}
+.auth-bar input:focus{border-color:#4f8ef7}
+
+.alert{
+  padding:10px 16px;
+  border-radius:6px;
+  font-size:14px;
+  margin-bottom:16px;
+  display:none;
+}
+.alert-error{background:rgba(229,83,83,.12);border:1px solid #e55353;color:#e55353}
+.alert-success{background:rgba(62,207,142,.10);border:1px solid #3ecf8e;color:#3ecf8e}
+.alert-warning{background:rgba(245,166,35,.12);border:1px solid #f5a623;color:#f5a623}
+
+.cards{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:14px;
+  margin-bottom:24px;
+}
+.card{
+  background:#1a1d27;
+  border:1px solid #2d3148;
+  border-radius:8px;
+  padding:18px 16px;
+  text-align:center;
+}
+.card-icon{font-size:24px;margin-bottom:6px}
+.card-label{font-size:13px;color:#8b8fa3;margin-bottom:4px}
+.card-value{font-size:28px;font-weight:700;margin-bottom:4px}
+.card-desc{font-size:12px;color:#5e6278;line-height:1.4}
+.card--gold .card-value{color:#f5a623}
+.card--ocean .card-value{color:#3ecf8e}
+.card--new .card-value{color:#4f8ef7}
+.card--version .card-value{color:#a78bfa}
+
+.section{margin-bottom:28px}
+.section-title{
+  font-size:16px;
+  font-weight:600;
+  margin-bottom:12px;
+  padding-bottom:8px;
+  border-bottom:1px solid #2d3148;
+}
+.section-meta{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-bottom:12px;
+  font-size:13px;
+  color:#8b8fa3;
+}
+
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:14px;
+}
+th{
+  text-align:left;
+  padding:10px 12px;
+  background:#161923;
+  color:#8b8fa3;
+  font-weight:600;
+  white-space:nowrap;
+  border-bottom:1px solid #2d3148;
+}
+td{
+  padding:10px 12px;
+  border-bottom:1px solid #1e2236;
+  vertical-align:top;
+}
+tr:hover td{background:rgba(79,142,247,.04)}
+.badge{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:4px;
+  font-size:12px;
+  font-weight:600;
+}
+.badge-threshold{background:rgba(245,166,35,.15);color:#f5a623}
+.badge-manual{background:rgba(79,142,247,.15);color:#4f8ef7}
+.badge-weekly{background:rgba(62,207,142,.15);color:#3ecf8e}
+.mono{font-family:monospace;font-size:13px;color:#8b8fa3}
+
+.report-box{
+  background:#1a1d27;
+  border:1px solid #2d3148;
+  border-radius:8px;
+  padding:20px 24px;
+  line-height:1.8;
+  font-size:14px;
+}
+.report-box h3{font-size:16px;font-weight:700;color:#e1e4eb;margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid #2d3148}
+.report-box h3:first-child{margin-top:0}
+.report-box strong{color:#f5a623}
+.report-box ul{margin:6px 0 6px 20px}
+.report-box li{margin-bottom:4px}
+.report-box code{background:#161923;padding:2px 6px;border-radius:3px;font-size:13px;color:#4f8ef7}
+.report-box hr{border:none;border-top:1px solid #2d3148;margin:16px 0}
+.report-box p{margin:6px 0}
+
+.btn-view{
+  background:transparent;
+  color:#4f8ef7;
+  border:1px solid #4f8ef7;
+  padding:4px 12px;
+  border-radius:4px;
+  font-size:12px;
+  cursor:pointer;
+  transition:all .15s;
+}
+.btn-view:hover{background:rgba(79,142,247,.1)}
+.btn-view.active{background:#4f8ef7;color:#fff}
+
+.empty{
+  text-align:center;
+  padding:32px 16px;
+  color:#5e6278;
+  font-size:14px;
+}
+
+.loading-overlay{
+  text-align:center;
+  padding:40px 16px;
+  color:#8b8fa3;
+  display:none;
+}
+.spinner{
+  display:inline-block;
+  width:28px;height:28px;
+  border:3px solid #2d3148;
+  border-top-color:#4f8ef7;
+  border-radius:50%;
+  animation:spin .7s linear infinite;
+  margin-bottom:8px;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@media(max-width:600px){
+  .header{flex-direction:column;align-items:flex-start}
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .card-value{font-size:22px}
+  .report-box{padding:14px 16px}
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="header-title">📊 关键词洞察报告</div>
+    <div class="header-right">
+      <span class="header-time" id="lastUpdate"></span>
+      <button class="btn" id="btnRefresh" onclick="loadData()" style="display:none">🔄 刷新</button>
+      <button class="btn btn-generate" id="btnGenerate" onclick="generateReport()" style="display:none">📝 生成报告</button>
+    </div>
+  </div>
+
+  <div class="auth-bar">
+    <label>API Key:</label>
+    <input type="password" id="apiKeyInput" placeholder="输入 X-API-Key" autocomplete="off">
+    <button class="btn" id="btnLoad" onclick="onLoadClick()">加载数据</button>
+  </div>
+
+  <div class="alert alert-error" id="alertError"></div>
+  <div class="alert alert-success" id="alertSuccess"></div>
+  <div class="alert alert-warning" id="alertWarning"></div>
+
+  <div class="loading-overlay" id="loading">
+    <div class="spinner"></div>
+    <div>正在加载数据…</div>
+  </div>
+
+  <div id="mainContent" style="display:none">
+
+    <div class="cards">
+      <div class="card card--gold">
+        <div class="card-icon">💎</div>
+        <div class="card-label">金矿词</div>
+        <div class="card-value" id="vGold">-</div>
+        <div class="card-desc">peak_score ≥ 80</div>
+      </div>
+      <div class="card card--ocean">
+        <div class="card-icon">🟢</div>
+        <div class="card-label">蓝海词</div>
+        <div class="card-value" id="vOcean">-</div>
+        <div class="card-desc">peak_score 60-79</div>
+      </div>
+      <div class="card card--new">
+        <div class="card-icon">📈</div>
+        <div class="card-label">新增词</div>
+        <div class="card-value" id="vNew">-</div>
+        <div class="card-desc">7天内首次出现的高分词</div>
+      </div>
+      <div class="card card--version">
+        <div class="card-icon">🔄</div>
+        <div class="card-label">报告版本</div>
+        <div class="card-value" id="vVersion">-</div>
+        <div class="card-desc">自迭代 Prompt 版本号</div>
+      </div>
+    </div>
+
+    <div class="section" id="sectionLatest">
+      <div class="section-title">📄 最新评估报告</div>
+      <div class="section-meta" id="latestMeta"></div>
+      <div id="latestReport"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">🕐 历史报告记录</div>
+      <div id="historyTable"></div>
+    </div>
+
+    <div class="section" id="sectionDetail" style="display:none">
+      <div class="section-title">📋 历史报告详情</div>
+      <div id="detailReport"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+
+  const KEY_STORAGE = 'aso_api_key';
+  const apiKeyInput = $('apiKeyInput');
+  const saved = sessionStorage.getItem(KEY_STORAGE);
+  if (saved) apiKeyInput.value = saved;
+
+  function getApiKey() {
+    const v = apiKeyInput.value.trim();
+    if (v) sessionStorage.setItem(KEY_STORAGE, v);
+    return v;
+  }
+
+  function showError(msg) { const el = $('alertError'); el.textContent = msg; el.style.display = 'block'; }
+  function hideError() { $('alertError').style.display = 'none'; }
+  function showSuccess(msg) { const el = $('alertSuccess'); el.textContent = msg; el.style.display = 'block'; setTimeout(() => { el.style.display = 'none'; }, 5000); }
+  function showWarning(msg) { const el = $('alertWarning'); el.textContent = msg; el.style.display = 'block'; }
+  function hideWarning() { $('alertWarning').style.display = 'none'; }
+
+  function setLoading(on) {
+    $('loading').style.display = on ? 'block' : 'none';
+    $('btnLoad').disabled = on;
+    const r = $('btnRefresh'); if (r) r.disabled = on;
+  }
+
+  function fmtShort(dtStr) {
+    if (!dtStr) return '-';
+    const m = dtStr.match(/\d{4}-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+    if (m) return m[1] + '-' + m[2] + ' ' + m[3] + ':' + m[4];
+    return dtStr;
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /* ========== 轻量 Markdown -> HTML ========== */
+  function renderMarkdown(md) {
+    if (!md) return '<div class="empty">暂无报告内容</div>';
+    let html = '';
+    const lines = md.split('\n');
+    let inList = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+
+      if (line.match(/^---+$/)) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += '<hr>';
+        continue;
+      }
+
+      if (line.match(/^### /)) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += '<h3>' + formatInline(line.slice(4)) + '</h3>';
+        continue;
+      }
+
+      if (line.match(/^- /)) {
+        if (!inList) { html += '<ul>'; inList = true; }
+        html += '<li>' + formatInline(line.slice(2)) + '</li>';
+        continue;
+      }
+
+      if (inList) { html += '</ul>'; inList = false; }
+
+      if (line.trim() === '') {
+        continue;
+      }
+
+      html += '<p>' + formatInline(line) + '</p>';
+    }
+    if (inList) html += '</ul>';
+    return html;
+  }
+
+  function formatInline(text) {
+    text = escapeHtml(text);
+    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/`(.+?)`/g, '<code>$1</code>');
+    return text;
+  }
+
+  /* ========== 触发原因标签 ========== */
+  function triggerBadge(triggered_by) {
+    if (triggered_by === 'auto_threshold') return '<span class="badge badge-threshold">📊 数据阈值</span>';
+    if (triggered_by === 'manual') return '<span class="badge badge-manual">🖐️ 手动触发</span>';
+    if (triggered_by === 'weekly_full') return '<span class="badge badge-weekly">📅 周全量</span>';
+    return '<span class="badge">' + escapeHtml(triggered_by || '-') + '</span>';
+  }
+
+  /* ========== 数据缓存 ========== */
+  let latestData = null;
+  let expandedId = null;
+
+  /* ========== 渲染 ========== */
+  function renderCards(latest) {
+    if (!latest || !latest.id) {
+      $('vGold').textContent = '-';
+      $('vOcean').textContent = '-';
+      $('vNew').textContent = '-';
+      $('vVersion').textContent = '-';
+      return;
+    }
+    const goldCount = latest.new_gold_count || 0;
+    const kwCount = latest.keyword_count || 0;
+    $('vGold').textContent = goldCount + ' 个';
+    $('vOcean').textContent = (kwCount - goldCount) + ' 个';
+    $('vNew').textContent = goldCount + ' 个';
+    $('vVersion').textContent = '第 ' + (latest.prompt_version || 1) + ' 版';
+  }
+
+  function renderLatestReport(latest) {
+    const meta = $('latestMeta');
+    const box = $('latestReport');
+
+    if (!latest || !latest.id) {
+      meta.innerHTML = '';
+      box.innerHTML = '<div class="empty">暂无报告，请点击「生成报告」创建第一份</div>';
+      return;
+    }
+
+    meta.innerHTML =
+      triggerBadge(latest.triggered_by) + ' ' +
+      '<span class="mono">关键词: ' + (latest.keyword_count || 0) + '</span> ' +
+      '<span class="mono">' + fmtShort(latest.created_at) + ' UTC</span>';
+
+    box.innerHTML = '<div class="report-box">' + renderMarkdown(latest.report_md) + '</div>';
+  }
+
+  function renderHistory(items) {
+    const wrap = $('historyTable');
+    if (!items || items.length === 0) {
+      wrap.innerHTML = '<div class="empty">暂无历史报告</div>';
+      return;
+    }
+    let html = '<div class="table-wrap"><table><thead><tr>' +
+      '<th>ID</th><th>生成时间</th><th>触发原因</th><th>词总数</th><th>金矿词</th><th>操作</th>' +
+      '</tr></thead><tbody>';
+    for (const r of items) {
+      html += '<tr>' +
+        '<td>' + r.id + '</td>' +
+        '<td class="mono">' + fmtShort(r.created_at) + '</td>' +
+        '<td>' + triggerBadge(r.triggered_by) + '</td>' +
+        '<td style="text-align:center">' + (r.keyword_count || 0) + '</td>' +
+        '<td style="text-align:center">' + (r.new_gold_count || 0) + '</td>' +
+        '<td><button class="btn-view' + (expandedId === r.id ? ' active' : '') +
+          '" onclick="viewReport(' + r.id + ')">' +
+          (expandedId === r.id ? '收起' : '查看') + '</button></td>' +
+        '</tr>';
+    }
+    html += '</tbody></table></div>';
+    wrap.innerHTML = html;
+  }
+
+  /* ========== 查看历史报告 ========== */
+  async function viewReport(id) {
+    if (expandedId === id) {
+      expandedId = null;
+      $('sectionDetail').style.display = 'none';
+      $('detailReport').innerHTML = '';
+      renderHistory(window._historyItems);
+      return;
+    }
+
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+
+    try {
+      const resp = await fetch('/report/' + id, {
+        headers: { 'X-API-Key': apiKey }
+      });
+      if (!resp.ok) {
+        showError('加载报告 #' + id + ' 失败（HTTP ' + resp.status + '）');
+        return;
+      }
+      const data = await resp.json();
+
+      expandedId = id;
+      $('sectionDetail').style.display = 'block';
+      $('detailReport').innerHTML =
+        '<div style="margin-bottom:10px;font-size:14px;color:#8b8fa3">' +
+        '报告 #' + data.id + ' — ' + fmtShort(data.created_at) + ' UTC ' +
+        triggerBadge(data.triggered_by) +
+        '</div>' +
+        '<div class="report-box">' + renderMarkdown(data.report_md) + '</div>';
+
+      renderHistory(window._historyItems);
+
+      $('sectionDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+      showError('加载报告失败: ' + err.message);
+    }
+  }
+
+  /* ========== 生成报告 ========== */
+  async function generateReport() {
+    const apiKey = getApiKey();
+    if (!apiKey) { showError('请输入 API Key'); return; }
+
+    const btn = $('btnGenerate');
+    btn.disabled = true;
+    btn.textContent = '⏳ 生成中...';
+    hideError();
+
+    try {
+      const resp = await fetch('/report/generate', {
+        method: 'POST',
+        headers: {
+          'X-API-Key': apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ force: true })
+      });
+
+      if (resp.status === 401) {
+        showError('API Key 无效');
+        return;
+      }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        showError('生成失败: ' + (err.detail || 'HTTP ' + resp.status));
+        return;
+      }
+
+      showSuccess('报告生成成功，正在刷新...');
+      await loadData();
+    } catch (err) {
+      showError('生成报告失败: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📝 生成报告';
+    }
+  }
+
+  /* ========== 数据加载 ========== */
+  async function loadData() {
+    const apiKey = getApiKey();
+    if (!apiKey) { showError('请输入 API Key'); return; }
+    hideError(); hideWarning();
+    setLoading(true);
+
+    try {
+      const [latestResp, historyResp, checkResp] = await Promise.all([
+        fetch('/report/latest', { headers: { 'X-API-Key': apiKey } }),
+        fetch('/report/history', { headers: { 'X-API-Key': apiKey } }),
+        fetch('/report/check', { headers: { 'X-API-Key': apiKey } }),
+      ]);
+
+      if (latestResp.status === 401 || historyResp.status === 401) {
+        showError('API Key 无效，请检查后重试');
+        setLoading(false);
+        return;
+      }
+
+      const latest = await latestResp.json();
+      const history = await historyResp.json();
+      const check = await checkResp.json();
+
+      latestData = latest;
+      window._historyItems = history.items || [];
+
+      renderCards(latest);
+      renderLatestReport(latest);
+      renderHistory(window._historyItems);
+
+      if (latest && latest.created_at) {
+        $('lastUpdate').textContent = '上次更新: ' + fmtShort(latest.created_at) + ' UTC';
+      }
+
+      $('btnRefresh').style.display = 'inline-block';
+      $('btnGenerate').style.display = 'inline-block';
+      $('mainContent').style.display = 'block';
+
+      if (check && check.should_generate) {
+        showWarning('⚠️ 检测到数据变化达到阈值，建议生成新报告');
+        $('btnGenerate').classList.add('highlight');
+      } else {
+        $('btnGenerate').classList.remove('highlight');
+      }
+
+    } catch (err) {
+      showError('无法连接到服务，请检查服务是否启动');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function onLoadClick() { loadData(); }
+
+  apiKeyInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') loadData();
+  });
+
+  window.loadData = loadData;
+  window.onLoadClick = onLoadClick;
+  window.generateReport = generateReport;
+  window.viewReport = viewReport;
+
+  if (saved) loadData();
+
+})();
+</script>
+</body>
+</html>

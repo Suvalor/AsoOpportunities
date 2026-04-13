@@ -12,15 +12,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from typing import Any
-
-import requests
 
 from aso_core.autocomplete import get_autocomplete
 from aso_core.scanner import PRIMARY_COUNTRY
 
+from .agent_client import call_agent
 from .database import (
     activate_seed,
     append_evolution_log,
@@ -34,15 +32,6 @@ from .database import (
 )
 
 logger = logging.getLogger(__name__)
-
-# ===== Anthropic API 配置（全部来自环境变量，默认值仅作本地开发回退）=====
-_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-_ANTHROPIC_BASE_URL = os.getenv(
-    "ANTHROPIC_BASE_URL", "https://api.anthropic.com"
-).rstrip("/")
-_ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-_ANTHROPIC_VERSION = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
-_ANTHROPIC_ENDPOINT = f"{_ANTHROPIC_BASE_URL}/v1/messages"
 
 # 剪枝：本批次内表现过差且矩阵仍保留足够 active 时才剪
 _MIN_ACTIVE_AFTER_PRUNE = 8
@@ -172,72 +161,17 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
         + "\n".join(lines)
     )
 
-    if not _ANTHROPIC_API_KEY:
-        print("[Evolution] 错误：ANTHROPIC_API_KEY 未设置，跳过种子生成")
-        return [], ""
-
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": _ANTHROPIC_API_KEY,
-        "anthropic-version": _ANTHROPIC_VERSION,
-    }
-
-    payload = {
-        "model": _ANTHROPIC_MODEL,
-        "max_tokens": 1000,
-        "messages": [{"role": "user", "content": user_prompt}],
-    }
-
     try:
-        response = requests.post(
-            _ANTHROPIC_ENDPOINT,
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
-    except requests.exceptions.RequestException as e:
-        print(f"[Evolution] 网络错误：{e}")
-        return [], ""
-
-    if response.status_code == 401:
-        print(
-            f"[Evolution] API Key 无效（401）"
-            f"，endpoint={_ANTHROPIC_ENDPOINT}"
-            f"，model={_ANTHROPIC_MODEL}"
-        )
-        return [], ""
-
-    if response.status_code == 404:
-        print(
-            f"[Evolution] 接口地址不存在（404）"
-            f"，请检查 ANTHROPIC_BASE_URL={_ANTHROPIC_BASE_URL}"
-            f" 和 ANTHROPIC_MODEL={_ANTHROPIC_MODEL}"
-        )
-        return [], ""
-
-    if response.status_code != 200:
-        print(
-            f"[Evolution] API 异常 {response.status_code}：{response.text[:300]}"
-        )
-        return [], ""
-
-    try:
-        data: Any = response.json()
-    except Exception:
-        err = "invalid_json_response"
+        assistant_text = call_agent("seed_evolution", user_prompt, max_tokens=1000)
+    except (ValueError, Exception) as e:
+        print(f"[Evolution] 智能体调用失败: {e}")
         append_evolution_log(
             batch_id,
             "generate_new_seeds_failed",
-            {"error": err},
+            {"error": str(e)[:500]},
         )
-        return [], err
+        return [], ""
 
-    parts = data.get("content") or []
-    texts: list[str] = []
-    for p in parts:
-        if isinstance(p, dict) and p.get("type") == "text":
-            texts.append(str(p.get("text") or ""))
-    assistant_text = "\n".join(texts).strip()
     if not assistant_text:
         err = "empty_assistant_content"
         append_evolution_log(
