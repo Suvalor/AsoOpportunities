@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..auth import verify_api_key
+from ..auth import verify_api_key_or_cookie as verify_api_key
 from ..database import get_compare_analysis, get_top_keywords
 
 router = APIRouter(tags=["analysis"])

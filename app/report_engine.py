@@ -6,25 +6,16 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any
 
-import requests
-
+from .agent_client import call_agent
 from .database import (
     get_keyword_snapshot_for_report,
     get_latest_report,
     get_recent_score_delta_sum,
     insert_report,
-)
-from .evolution import (
-    _ANTHROPIC_API_KEY,
-    _ANTHROPIC_ENDPOINT,
-    _ANTHROPIC_MODEL,
-    _ANTHROPIC_VERSION,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,56 +191,16 @@ def build_report_prompt(
     return prompt, new_version
 
 
-def _call_claude(prompt: str) -> str:
-    """调用 Anthropic Claude API，返回生成的文本内容。"""
-    if not _ANTHROPIC_API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY 未设置，无法生成报告")
-
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": _ANTHROPIC_API_KEY,
-        "anthropic-version": _ANTHROPIC_VERSION,
-    }
-    payload = {
-        "model": _ANTHROPIC_MODEL,
-        "max_tokens": 4000,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-
-    resp = requests.post(
-        _ANTHROPIC_ENDPOINT,
-        headers=headers,
-        json=payload,
-        timeout=60,
-    )
-
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"Claude API 返回 {resp.status_code}: {resp.text[:500]}"
-        )
-
-    data: Any = resp.json()
-    parts = data.get("content") or []
-    texts: list[str] = []
-    for p in parts:
-        if isinstance(p, dict) and p.get("type") == "text":
-            texts.append(str(p.get("text") or ""))
-    result = "\n".join(texts).strip()
-    if not result:
-        raise RuntimeError("Claude API 返回空内容")
-    return result
-
-
 def run_report_generation(triggered_by: str = "auto_threshold") -> dict:
     """
-    完整报告生成流程：快照 -> Prompt -> Claude API -> 入库。
+    完整报告生成流程：快照 -> Prompt -> 智能体调用 -> 入库。
     返回新报告的摘要字典。
     """
     snapshot = get_current_keyword_snapshot()
     latest_report = get_latest_report()
     prompt, prompt_version = build_report_prompt(snapshot, latest_report)
 
-    report_md = _call_claude(prompt)
+    report_md = call_agent("keyword_report", prompt, max_tokens=4000)
 
     new_gold = len([
         k for k in snapshot["new_keywords"]

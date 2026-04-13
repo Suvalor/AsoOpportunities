@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ..auth import verify_api_key
+from ..auth import verify_api_key_or_cookie as verify_api_key
 from ..database import get_latest_report, get_report_by_id, get_report_history
 from ..report_engine import (
     get_current_keyword_snapshot,

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from aso_core.scanner import run_full_scan
 from aso_core.scorer import blue_ocean_label, blue_ocean_score
 
-from ..auth import verify_api_key
+from ..auth import verify_api_key_or_cookie as verify_api_key
 from ..database import (
     create_running_job,
     get_active_seeds,
