@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated
 
+import pymysql
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -91,15 +92,29 @@ def create_agent_endpoint(
     body: CreateAgentBody,
     _: Annotated[dict, Depends(require_admin)],
 ) -> dict:
+    try:
+        api_key_enc = encrypt_api_key(body.api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     data = {
         "name": body.name,
         "base_url": body.base_url,
-        "api_key_enc": encrypt_api_key(body.api_key),
+        "api_key_enc": api_key_enc,
         "api_key_preview": _make_preview(body.api_key),
         "model": body.model,
         "version": body.version,
     }
-    new_id = insert_agent(data)
+    try:
+        new_id = insert_agent(data)
+    except pymysql.err.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"数据库不可用或连接失败：{exc.args[1] if exc.args else str(exc)}",
+        ) from exc
+    except pymysql.err.IntegrityError as exc:
+        raise HTTPException(status_code=400, detail=f"数据写入失败：{exc}") from exc
+
     agent = get_agent_by_id(new_id)
     return _agent_to_dict(agent) if agent else {"id": new_id}
 
@@ -126,10 +141,19 @@ def update_agent_endpoint(
     if body.is_active is not None:
         data["is_active"] = body.is_active
     if body.api_key is not None and body.api_key.strip():
-        data["api_key_enc"] = encrypt_api_key(body.api_key)
+        try:
+            data["api_key_enc"] = encrypt_api_key(body.api_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         data["api_key_preview"] = _make_preview(body.api_key)
 
-    update_agent(agent_id, data)
+    try:
+        update_agent(agent_id, data)
+    except pymysql.err.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"数据库不可用或连接失败：{exc.args[1] if exc.args else str(exc)}",
+        ) from exc
     updated = get_agent_by_id(agent_id)
     return _agent_to_dict(updated) if updated else {"id": agent_id}
 
