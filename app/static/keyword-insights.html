@@ -48,32 +48,6 @@ a{color:#4f8ef7;text-decoration:none}
 .btn-generate.highlight{background:#f5a623;animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
 
-.auth-bar{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  flex-wrap:wrap;
-  padding:14px 16px;
-  background:#1a1d27;
-  border:1px solid #2d3148;
-  border-radius:8px;
-  margin-bottom:20px;
-}
-.auth-bar label{font-size:14px;font-weight:600;white-space:nowrap}
-.auth-bar input{
-  flex:1;
-  min-width:180px;
-  padding:7px 12px;
-  background:#0f1117;
-  border:1px solid #2d3148;
-  border-radius:6px;
-  color:#e1e4eb;
-  font-size:14px;
-  font-family:monospace;
-  outline:none;
-}
-.auth-bar input:focus{border-color:#4f8ef7}
-
 .alert{
   padding:10px 16px;
   border-radius:6px;
@@ -232,12 +206,6 @@ tr:hover td{background:rgba(79,142,247,.04)}
     </div>
   </div>
 
-  <div class="auth-bar">
-    <label>API Key:</label>
-    <input type="password" id="apiKeyInput" placeholder="输入 X-API-Key" autocomplete="off">
-    <button class="btn" id="btnLoad" onclick="onLoadClick()">加载数据</button>
-  </div>
-
   <div class="alert alert-error" id="alertError"></div>
   <div class="alert alert-success" id="alertSuccess"></div>
   <div class="alert alert-warning" id="alertWarning"></div>
@@ -301,17 +269,6 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
   const $ = (id) => document.getElementById(id);
 
-  const KEY_STORAGE = 'aso_api_key';
-  const apiKeyInput = $('apiKeyInput');
-  const saved = sessionStorage.getItem(KEY_STORAGE);
-  if (saved) apiKeyInput.value = saved;
-
-  function getApiKey() {
-    const v = apiKeyInput.value.trim();
-    if (v) sessionStorage.setItem(KEY_STORAGE, v);
-    return v;
-  }
-
   function showError(msg) { const el = $('alertError'); el.textContent = msg; el.style.display = 'block'; }
   function hideError() { $('alertError').style.display = 'none'; }
   function showSuccess(msg) { const el = $('alertSuccess'); el.textContent = msg; el.style.display = 'block'; setTimeout(() => { el.style.display = 'none'; }, 5000); }
@@ -320,7 +277,6 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
   function setLoading(on) {
     $('loading').style.display = on ? 'block' : 'none';
-    $('btnLoad').disabled = on;
     const r = $('btnRefresh'); if (r) r.disabled = on;
   }
 
@@ -466,13 +422,8 @@ tr:hover td{background:rgba(79,142,247,.04)}
       return;
     }
 
-    const apiKey = getApiKey();
-    if (!apiKey) return;
-
     try {
-      const resp = await fetch('/report/' + id, {
-        headers: { 'X-API-Key': apiKey }
-      });
+      const resp = await fetch('/report/' + id);
       if (!resp.ok) {
         showError('加载报告 #' + id + ' 失败（HTTP ' + resp.status + '）');
         return;
@@ -498,9 +449,6 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
   /* ========== 生成报告 ========== */
   async function generateReport() {
-    const apiKey = getApiKey();
-    if (!apiKey) { showError('请输入 API Key'); return; }
-
     const btn = $('btnGenerate');
     btn.disabled = true;
     btn.textContent = '⏳ 生成中...';
@@ -509,15 +457,12 @@ tr:hover td{background:rgba(79,142,247,.04)}
     try {
       const resp = await fetch('/report/generate', {
         method: 'POST',
-        headers: {
-          'X-API-Key': apiKey,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true })
       });
 
       if (resp.status === 401) {
-        showError('API Key 无效');
+        window.top.location.href = '/static/index.html';
         return;
       }
       if (!resp.ok) {
@@ -538,21 +483,18 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
   /* ========== 数据加载 ========== */
   async function loadData() {
-    const apiKey = getApiKey();
-    if (!apiKey) { showError('请输入 API Key'); return; }
     hideError(); hideWarning();
     setLoading(true);
 
     try {
       const [latestResp, historyResp, checkResp] = await Promise.all([
-        fetch('/report/latest', { headers: { 'X-API-Key': apiKey } }),
-        fetch('/report/history', { headers: { 'X-API-Key': apiKey } }),
-        fetch('/report/check', { headers: { 'X-API-Key': apiKey } }),
+        fetch('/report/latest'),
+        fetch('/report/history'),
+        fetch('/report/check'),
       ]);
 
       if (latestResp.status === 401 || historyResp.status === 401) {
-        showError('API Key 无效，请检查后重试');
-        setLoading(false);
+        window.top.location.href = '/static/index.html';
         return;
       }
 
@@ -589,18 +531,14 @@ tr:hover td{background:rgba(79,142,247,.04)}
     }
   }
 
-  function onLoadClick() { loadData(); }
-
-  apiKeyInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') loadData();
-  });
-
   window.loadData = loadData;
-  window.onLoadClick = onLoadClick;
   window.generateReport = generateReport;
   window.viewReport = viewReport;
 
-  if (saved) loadData();
+  fetch('/auth/me').then(r => {
+    if (!r.ok) { window.top.location.href = '/static/index.html'; return; }
+    loadData();
+  }).catch(() => { window.top.location.href = '/static/index.html'; });
 
 })();
 </script>

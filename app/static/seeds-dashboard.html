@@ -46,33 +46,6 @@ a{color:#4f8ef7;text-decoration:none}
 .btn:hover{opacity:.85}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 
-/* API Key 输入区 */
-.auth-bar{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  flex-wrap:wrap;
-  padding:14px 16px;
-  background:#1a1d27;
-  border:1px solid #2d3148;
-  border-radius:8px;
-  margin-bottom:20px;
-}
-.auth-bar label{font-size:14px;font-weight:600;white-space:nowrap}
-.auth-bar input{
-  flex:1;
-  min-width:180px;
-  padding:7px 12px;
-  background:#0f1117;
-  border:1px solid #2d3148;
-  border-radius:6px;
-  color:#e1e4eb;
-  font-size:14px;
-  font-family:monospace;
-  outline:none;
-}
-.auth-bar input:focus{border-color:#4f8ef7}
-
 /* 错误/提示 */
 .alert{
   padding:10px 16px;
@@ -222,13 +195,6 @@ tr:hover td{background:rgba(79,142,247,.04)}
     </div>
   </div>
 
-  <!-- API Key 输入 -->
-  <div class="auth-bar">
-    <label>API Key:</label>
-    <input type="password" id="apiKeyInput" placeholder="输入 X-API-Key" autocomplete="off">
-    <button class="btn" id="btnLoad" onclick="onLoadClick()">加载数据</button>
-  </div>
-
   <!-- 提示 -->
   <div class="alert alert-error" id="alertError"></div>
 
@@ -290,20 +256,6 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
   const $ = (id) => document.getElementById(id);
 
-  /* ========== sessionStorage 持久化 API Key ========== */
-  const KEY_STORAGE = 'aso_api_key';
-  const apiKeyInput = $('apiKeyInput');
-  const saved = sessionStorage.getItem(KEY_STORAGE);
-  if (saved) {
-    apiKeyInput.value = saved;
-  }
-
-  function getApiKey() {
-    const v = apiKeyInput.value.trim();
-    if (v) sessionStorage.setItem(KEY_STORAGE, v);
-    return v;
-  }
-
   /* ========== UI 辅助 ========== */
   function showError(msg) {
     const el = $('alertError');
@@ -315,7 +267,6 @@ tr:hover td{background:rgba(79,142,247,.04)}
   }
   function setLoading(on) {
     $('loading').style.display = on ? 'block' : 'none';
-    $('btnLoad').disabled = on;
     $('btnRefresh').disabled = on;
   }
 
@@ -470,27 +421,14 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
   /* ========== 数据加载 ========== */
   async function loadData() {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      showError('请输入 API Key');
-      return;
-    }
     hideError();
     setLoading(true);
 
     try {
-      const resp = await fetch('/seeds/status', {
-        headers: { 'X-API-Key': apiKey }
-      });
+      const resp = await fetch('/seeds/status');
 
       if (resp.status === 401) {
-        showError('API Key 无效，请检查后重试');
-        setLoading(false);
-        return;
-      }
-      if (resp.status >= 500) {
-        showError('服务内部错误，请查看日志');
-        setLoading(false);
+        window.top.location.href = '/static/index.html';
         return;
       }
       if (!resp.ok) {
@@ -516,21 +454,14 @@ tr:hover td{background:rgba(79,142,247,.04)}
     }
   }
 
-  function onLoadClick() {
-    loadData();
-  }
-
-  /* 回车触发加载 */
-  apiKeyInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') loadData();
-  });
-
   /* 暴露到全局供 onclick 调用 */
   window.loadData = loadData;
-  window.onLoadClick = onLoadClick;
 
-  /* 如果已有缓存的 Key，自动加载一次 */
-  if (saved) loadData();
+  /* 验证登录后自动加载 */
+  fetch('/auth/me').then(r => {
+    if (!r.ok) { window.top.location.href = '/static/index.html'; return; }
+    loadData();
+  }).catch(() => { window.top.location.href = '/static/index.html'; });
 
 })();
 </script>
