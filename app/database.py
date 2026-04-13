@@ -9,7 +9,8 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import pymysql
@@ -18,6 +19,28 @@ from pymysql import err as pymysql_err
 from pymysql.cursors import DictCursor
 
 logger = logging.getLogger(__name__)
+
+
+def _json_default_for_mysql(o: Any) -> Any:
+    """供 json.dumps 使用：MySQL/PyMySQL 常见不可直接 JSON 化的标量。"""
+    if isinstance(o, datetime):
+        return o.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(o, date):
+        return o.isoformat()
+    if isinstance(o, Decimal):
+        return float(o)
+    raise TypeError(f"类型 {type(o).__name__} 无法序列化为 JSON")
+
+
+def _mysql_row_json_safe(row: dict) -> dict:
+    """将查询行中的日期时间等转为可 JSON 序列化的值（报告快照 keywords_json 等）。"""
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        if isinstance(v, (datetime, date, Decimal)):
+            out[k] = _json_default_for_mysql(v)
+        else:
+            out[k] = v
+    return out
 
 
 # ===================== 智能体 API Key 加解密 =====================
@@ -1156,7 +1179,9 @@ def insert_report(data: dict) -> int:
     """插入一条报告，返回新记录 id。"""
     kw_json = data.get("keywords_json")
     if isinstance(kw_json, (list, dict)):
-        kw_json = json.dumps(kw_json, ensure_ascii=False)
+        kw_json = json.dumps(
+            kw_json, ensure_ascii=False, default=_json_default_for_mysql
+        )
     conn = None
     try:
         conn = _get_connection()
@@ -1225,7 +1250,7 @@ def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
                 LIMIT 100
                 """
             )
-            top_keywords = [dict(r) for r in cur.fetchall()]
+            top_keywords = [_mysql_row_json_safe(dict(r)) for r in cur.fetchall()]
 
             cur.execute(
                 """
