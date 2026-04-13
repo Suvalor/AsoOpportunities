@@ -24,10 +24,22 @@ logger = logging.getLogger(__name__)
 
 
 def _get_fernet() -> Fernet:
-    key = os.getenv("AGENT_ENCRYPT_KEY", "")
+    """从环境变量构造 Fernet；密钥须为 64 个十六进制字符（32 字节）。"""
+    key = (os.getenv("AGENT_ENCRYPT_KEY", "") or "").strip()
     if len(key) != 64:
-        raise ValueError("AGENT_ENCRYPT_KEY 必须是64位hex字符串")
-    raw = bytes.fromhex(key)
+        raise ValueError(
+            "环境变量 AGENT_ENCRYPT_KEY 未配置或长度不是 64："
+            "须为 64 位十六进制字符串（32 字节），"
+            "可在宿主机执行：python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    try:
+        raw = bytes.fromhex(key)
+    except ValueError as exc:
+        raise ValueError(
+            "AGENT_ENCRYPT_KEY 含有非十六进制字符，请仅使用 0-9、a-f、A-F"
+        ) from exc
+    if len(raw) != 32:
+        raise ValueError("AGENT_ENCRYPT_KEY 解码后必须为 32 字节")
     b64 = base64.urlsafe_b64encode(raw)
     return Fernet(b64)
 
