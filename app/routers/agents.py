@@ -76,6 +76,21 @@ class AssignmentBody(BaseModel):
     keyword_report: int | None = None
 
 
+def _assignments_response() -> dict:
+    """用途分配列表（不含鉴权，供 GET 与 PUT 复用）。"""
+    rows = get_all_assignments()
+    result: dict = {}
+    for r in rows:
+        result[r["usage"]] = {
+            "agent_id": r["agent_id"],
+            "agent_name": r.get("agent_name"),
+            "model": r.get("model"),
+            "is_active": bool(r.get("is_active")),
+            "updated_at": _format_dt(r.get("updated_at")),
+        }
+    return result
+
+
 @router.get("/agents")
 def list_agents(
     _: Annotated[dict, Depends(require_admin)],
@@ -117,6 +132,32 @@ def create_agent_endpoint(
 
     agent = get_agent_by_id(new_id)
     return _agent_to_dict(agent) if agent else {"id": new_id}
+
+
+# 须写在 PUT /agents/{agent_id} 之前，否则路径 assignments 会被当成 agent_id 整型转换失败 → 422
+@router.get("/agents/assignments")
+def get_assignments_endpoint(
+    _: Annotated[dict, Depends(require_admin)],
+) -> dict:
+    return _assignments_response()
+
+
+@router.put("/agents/assignments")
+def update_assignments_endpoint(
+    body: AssignmentBody,
+    _: Annotated[dict, Depends(require_admin)],
+) -> dict:
+    if body.seed_evolution is not None:
+        agent = get_agent_by_id(body.seed_evolution)
+        if not agent:
+            raise HTTPException(status_code=400, detail="seed_evolution 指向的智能体不存在")
+        set_assignment("seed_evolution", body.seed_evolution)
+    if body.keyword_report is not None:
+        agent = get_agent_by_id(body.keyword_report)
+        if not agent:
+            raise HTTPException(status_code=400, detail="keyword_report 指向的智能体不存在")
+        set_assignment("keyword_report", body.keyword_report)
+    return _assignments_response()
 
 
 @router.put("/agents/{agent_id}")
@@ -171,38 +212,3 @@ def delete_agent_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True}
-
-
-@router.get("/agents/assignments")
-def get_assignments_endpoint(
-    _: Annotated[dict, Depends(require_admin)],
-) -> dict:
-    rows = get_all_assignments()
-    result: dict = {}
-    for r in rows:
-        result[r["usage"]] = {
-            "agent_id": r["agent_id"],
-            "agent_name": r.get("agent_name"),
-            "model": r.get("model"),
-            "is_active": bool(r.get("is_active")),
-            "updated_at": _format_dt(r.get("updated_at")),
-        }
-    return result
-
-
-@router.put("/agents/assignments")
-def update_assignments_endpoint(
-    body: AssignmentBody,
-    _: Annotated[dict, Depends(require_admin)],
-) -> dict:
-    if body.seed_evolution is not None:
-        agent = get_agent_by_id(body.seed_evolution)
-        if not agent:
-            raise HTTPException(status_code=400, detail="seed_evolution 指向的智能体不存在")
-        set_assignment("seed_evolution", body.seed_evolution)
-    if body.keyword_report is not None:
-        agent = get_agent_by_id(body.keyword_report)
-        if not agent:
-            raise HTTPException(status_code=400, detail="keyword_report 指向的智能体不存在")
-        set_assignment("keyword_report", body.keyword_report)
-    return get_assignments_endpoint(_=None)
