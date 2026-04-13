@@ -56,31 +56,35 @@ n8n AI 节点（Claude/GPT）生成报告
 
 所有接口（除 /health）需在 Header 携带：`X-API-Key: 你的API_KEY`
 
-| 方法 | 路径 | 用途 |
-|------|------|------|
-| POST | /scan/start | 触发扫描（mode: full/tracking） |
-| GET  | /scan/status/{batch_id} | 查询任务进度 |
-| GET  | /analysis/top | 拉取蓝海词列表 |
-| GET  | /analysis/compare | 拉取趋势对比数据 |
-| GET  | /seeds/status | 查看种子矩阵进化状态 |
-| POST | /report/generate | 手动触发生成洞察报告 |
-| GET  | /report/check | 检查是否应触发报告 |
-| GET  | /report/latest | 获取最新报告全文 |
-| GET  | /report/history | 获取历史报告列表 |
-| GET  | /report/{id} | 获取指定报告全文 |
-| GET  | /health | 健康检查（无需鉴权） |
+
+| 方法   | 路径                      | 用途                        |
+| ---- | ----------------------- | ------------------------- |
+| POST | /scan/start             | 触发扫描（mode: full/tracking） |
+| GET  | /scan/status/{batch_id} | 查询任务进度                    |
+| GET  | /analysis/top           | 拉取蓝海词列表                   |
+| GET  | /analysis/compare       | 拉取趋势对比数据                  |
+| GET  | /seeds/status           | 查看种子矩阵进化状态                |
+| POST | /report/generate        | 手动触发生成洞察报告                |
+| GET  | /report/check           | 检查是否应触发报告                 |
+| GET  | /report/latest          | 获取最新报告全文                  |
+| GET  | /report/history         | 获取历史报告列表                  |
+| GET  | /report/{id}            | 获取指定报告全文                  |
+| GET  | /health                 | 健康检查（无需鉴权）                |
+
 
 ---
 
 **Query 参数说明**
 
 /analysis/top
+
 - `label`: 💎 金矿 / 🟢 蓝海 / 🟡 观察 / 🔴 跳过
 - `limit`: 默认 50，最大 200
 - `days`: 默认 7
 - `countries`: 逗号分隔，如 `us,gb`
 
 /analysis/compare
+
 - `days_recent`: 默认 7
 - `days_baseline`: 默认 14
 
@@ -116,6 +120,7 @@ http://your-server:8000/static/seeds-dashboard.html
 ```
 
 输入 API Key 后即可查看：
+
 - 各状态种子数量统计
 - 待激活种子列表
 - 最近进化事件时间线
@@ -127,6 +132,7 @@ http://your-server:8000/static/keyword-insights.html
 ```
 
 AI 自动在以下任一条件满足时生成新报告：
+
 - 新增 💎 金矿词 >= REPORT_MIN_NEW_GOLD 个
 - 近7天 score 总变化量 >= REPORT_MIN_SCORE_DELTA
 - 关键词总数变化 >= REPORT_MIN_KEYWORD_CHANGE 个
@@ -137,6 +143,7 @@ AI 自动在以下任一条件满足时生成新报告：
 历史报告全部持久化，可在页面内随时查阅。
 
 手动触发：
+
 ```bash
 curl -X POST http://localhost:8000/report/generate \
   -H "X-API-Key: 你的API_KEY" \
@@ -158,14 +165,17 @@ curl -X POST http://localhost:8000/report/generate \
 
 **蓝海评分说明**
 
-| 标签 | 分数 | 含义 |
-|------|------|------|
-| 💎 金矿 | 80–110 | 立即立项 |
-| 🟢 蓝海 | 60–79  | 重点调研 |
-| 🟡 观察 | 40–59  | 积累趋势 |
+
+| 标签    | 分数     | 含义       |
+| ----- | ------ | -------- |
+| 💎 金矿 | 80–110 | 立即立项     |
+| 🟢 蓝海 | 60–79  | 重点调研     |
+| 🟡 观察 | 40–59  | 积累趋势     |
 | 🔴 跳过 | 0–39   | 竞争过激或需求弱 |
 
+
 评分维度：
+
 - **搜索量真实性**（30 分）：同一词被多条种子路径触发
 - **竞争强度**（50 分）：头部评论数、市场集中度、竞品更新活跃度
 - **趋势信号**（30 分）：跨国家梯度差、历史排名变化
@@ -230,6 +240,7 @@ curl -X POST http://localhost:8000/report/generate \
 见 [LICENSE](LICENSE) 文件。
 
 ---
+
 ---
 
 # ASO Keyword Engine (English)
@@ -293,31 +304,35 @@ Push to Feishu (Lark)
 
 All endpoints (except /health) require the header: `X-API-Key: YOUR_API_KEY`
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | /scan/start | Trigger scan (mode: full/tracking) |
-| GET  | /scan/status/{batch_id} | Query task progress |
-| GET  | /analysis/top | Fetch blue-ocean keyword list |
-| GET  | /analysis/compare | Fetch trend comparison data |
-| GET  | /seeds/status | View seed matrix evolution status |
-| POST | /report/generate | Manually trigger insight report |
-| GET  | /report/check | Check if report should be triggered |
-| GET  | /report/latest | Get latest report full text |
-| GET  | /report/history | Get historical report list |
-| GET  | /report/{id} | Get specific report full text |
-| GET  | /health | Health check (no auth required) |
+
+| Method | Path                    | Purpose                             |
+| ------ | ----------------------- | ----------------------------------- |
+| POST   | /scan/start             | Trigger scan (mode: full/tracking)  |
+| GET    | /scan/status/{batch_id} | Query task progress                 |
+| GET    | /analysis/top           | Fetch blue-ocean keyword list       |
+| GET    | /analysis/compare       | Fetch trend comparison data         |
+| GET    | /seeds/status           | View seed matrix evolution status   |
+| POST   | /report/generate        | Manually trigger insight report     |
+| GET    | /report/check           | Check if report should be triggered |
+| GET    | /report/latest          | Get latest report full text         |
+| GET    | /report/history         | Get historical report list          |
+| GET    | /report/{id}            | Get specific report full text       |
+| GET    | /health                 | Health check (no auth required)     |
+
 
 ---
 
 **Query Parameters**
 
 /analysis/top
+
 - `label`: 💎 Gold Mine / 🟢 Blue Ocean / 🟡 Watch / 🔴 Skip
 - `limit`: default 50, max 200
 - `days`: default 7
 - `countries`: comma-separated, e.g. `us,gb`
 
 /analysis/compare
+
 - `days_recent`: default 7
 - `days_baseline`: default 14
 
@@ -353,6 +368,7 @@ http://your-server:8000/static/seeds-dashboard.html
 ```
 
 Enter your API Key to view:
+
 - Seed count statistics by status
 - Pending seeds list
 - Recent evolution event timeline
@@ -364,6 +380,7 @@ http://your-server:8000/static/keyword-insights.html
 ```
 
 AI automatically generates a new report when any of the following conditions are met:
+
 - New 💎 Gold Mine keywords >= REPORT_MIN_NEW_GOLD
 - Total score change in last 7 days >= REPORT_MIN_SCORE_DELTA
 - Total keyword count change >= REPORT_MIN_KEYWORD_CHANGE
@@ -374,6 +391,7 @@ enabling continuous iteration and self-correction of analysis conclusions.
 All historical reports are persisted and can be viewed on the page at any time.
 
 Manual trigger:
+
 ```bash
 curl -X POST http://localhost:8000/report/generate \
   -H "X-API-Key: YOUR_API_KEY" \
@@ -395,14 +413,17 @@ curl -X POST http://localhost:8000/report/generate \
 
 **Blue-Ocean Scoring**
 
-| Label | Score | Meaning |
-|-------|-------|---------|
-| 💎 Gold Mine | 80–110 | Greenlight immediately |
-| 🟢 Blue Ocean | 60–79 | Priority research |
-| 🟡 Watch | 40–59 | Accumulate trend data |
-| 🔴 Skip | 0–39 | Over-competitive or weak demand |
+
+| Label         | Score  | Meaning                         |
+| ------------- | ------ | ------------------------------- |
+| 💎 Gold Mine  | 80–110 | Greenlight immediately          |
+| 🟢 Blue Ocean | 60–79  | Priority research               |
+| 🟡 Watch      | 40–59  | Accumulate trend data           |
+| 🔴 Skip       | 0–39   | Over-competitive or weak demand |
+
 
 Scoring dimensions:
+
 - **Search Authenticity** (30 pts): Same keyword triggered by multiple seed paths
 - **Competition Intensity** (50 pts): Top app reviews, market concentration, competitor update frequency
 - **Trend Signals** (30 pts): Cross-country gradient, historical rank changes
