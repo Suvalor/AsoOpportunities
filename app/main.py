@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
-from .routers import analysis, scan, seeds
+from .routers import analysis, report, scan, seeds
 
 load_dotenv()
 
@@ -28,6 +28,7 @@ app = FastAPI(title="ASO 蓝海关键词服务", version="1.0.0")
 app.include_router(scan.router)
 app.include_router(analysis.router)
 app.include_router(seeds.router)
+app.include_router(report.router)
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)

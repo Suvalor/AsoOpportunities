@@ -63,6 +63,11 @@ n8n AI 节点（Claude/GPT）生成报告
 | GET  | /analysis/top | 拉取蓝海词列表 |
 | GET  | /analysis/compare | 拉取趋势对比数据 |
 | GET  | /seeds/status | 查看种子矩阵进化状态 |
+| POST | /report/generate | 手动触发生成洞察报告 |
+| GET  | /report/check | 检查是否应触发报告 |
+| GET  | /report/latest | 获取最新报告全文 |
+| GET  | /report/history | 获取历史报告列表 |
+| GET  | /report/{id} | 获取指定报告全文 |
 | GET  | /health | 健康检查（无需鉴权） |
 
 ---
@@ -114,6 +119,30 @@ http://your-server:8000/static/seeds-dashboard.html
 - 各状态种子数量统计
 - 待激活种子列表
 - 最近进化事件时间线
+
+### 关键词洞察报告页面
+
+```
+http://your-server:8000/static/keyword-insights.html
+```
+
+AI 自动在以下任一条件满足时生成新报告：
+- 新增 💎 金矿词 >= REPORT_MIN_NEW_GOLD 个
+- 近7天 score 总变化量 >= REPORT_MIN_SCORE_DELTA
+- 关键词总数变化 >= REPORT_MIN_KEYWORD_CHANGE 个
+- 每次周全量扫描结束后强制生成
+
+每次生成报告时，AI 会将上一份报告作为记忆注入，
+实现分析结论的持续迭代与自我修正。
+历史报告全部持久化，可在页面内随时查阅。
+
+手动触发：
+```bash
+curl -X POST http://localhost:8000/report/generate \
+  -H "X-API-Key: 你的API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
+```
 
 ---
 
@@ -172,10 +201,12 @@ http://your-server:8000/static/seeds-dashboard.html
 │   ├── auth.py           # X-API-Key 鉴权
 │   ├── database.py       # MySQL 连接 + SQL 函数
 │   ├── evolution.py      # 种子进化引擎
+│   ├── report_engine.py  # 关键词洞察报告引擎
 │   └── routers/
 │       ├── scan.py       # /scan/start, /scan/status
 │       ├── analysis.py   # /analysis/top, /analysis/compare
-│       └── seeds.py      # /seeds/status
+│       ├── seeds.py      # /seeds/status
+│       └── report.py     # /report/* 报告接口
 └── docs/
     ├── architecture.md   # 架构说明 + Mermaid 流程图
     ├── cursor-prompts.md # Claude 二次筛选 Prompt 模板
@@ -269,6 +300,11 @@ All endpoints (except /health) require the header: `X-API-Key: YOUR_API_KEY`
 | GET  | /analysis/top | Fetch blue-ocean keyword list |
 | GET  | /analysis/compare | Fetch trend comparison data |
 | GET  | /seeds/status | View seed matrix evolution status |
+| POST | /report/generate | Manually trigger insight report |
+| GET  | /report/check | Check if report should be triggered |
+| GET  | /report/latest | Get latest report full text |
+| GET  | /report/history | Get historical report list |
+| GET  | /report/{id} | Get specific report full text |
 | GET  | /health | Health check (no auth required) |
 
 ---
@@ -320,6 +356,30 @@ Enter your API Key to view:
 - Seed count statistics by status
 - Pending seeds list
 - Recent evolution event timeline
+
+### Keyword Insights Report Page
+
+```
+http://your-server:8000/static/keyword-insights.html
+```
+
+AI automatically generates a new report when any of the following conditions are met:
+- New 💎 Gold Mine keywords >= REPORT_MIN_NEW_GOLD
+- Total score change in last 7 days >= REPORT_MIN_SCORE_DELTA
+- Total keyword count change >= REPORT_MIN_KEYWORD_CHANGE
+- After every weekly full scan
+
+Each report generation injects the previous report as memory context,
+enabling continuous iteration and self-correction of analysis conclusions.
+All historical reports are persisted and can be viewed on the page at any time.
+
+Manual trigger:
+```bash
+curl -X POST http://localhost:8000/report/generate \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
+```
 
 ---
 
@@ -378,10 +438,12 @@ Scoring dimensions:
 │   ├── auth.py           # X-API-Key authentication
 │   ├── database.py       # MySQL connection + SQL functions
 │   ├── evolution.py      # Seed evolution engine
+│   ├── report_engine.py  # Keyword insights report engine
 │   └── routers/
 │       ├── scan.py       # /scan/start, /scan/status
 │       ├── analysis.py   # /analysis/top, /analysis/compare
-│       └── seeds.py      # /seeds/status
+│       ├── seeds.py      # /seeds/status
+│       └── report.py     # /report/* report endpoints
 └── docs/
     ├── architecture.md   # Architecture + Mermaid diagrams
     ├── cursor-prompts.md # Claude screening prompt template

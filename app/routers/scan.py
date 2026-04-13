@@ -117,6 +117,20 @@ def _run_scan_background(
         insert_keywords(results, batch_id, "us")
         if mode == "full":
             run_evolution_after_full_scan(batch_id)
+
+        try:
+            from ..report_engine import run_report_generation, should_generate_report
+
+            should, reason, detail = should_generate_report()
+            if should or mode == "full":
+                trigger = "weekly_full" if mode == "full" else "auto_threshold"
+                run_report_generation(triggered_by=trigger)
+                logger.info("[Report] 报告已生成，触发原因: %s", reason)
+            else:
+                logger.info("[Report] 未触发报告生成，原因: %s，详情: %s", reason, detail)
+        except Exception as report_exc:
+            logger.warning("[Report] 报告生成失败（不影响扫描结果）: %s", report_exc)
+
         update_job(batch_id, "done", total=len(results))
         logger.info("扫描任务完成 batch_id=%s 关键词数=%d", batch_id, len(results))
     except Exception as exc:

@@ -194,6 +194,22 @@ def init_db() -> None:
       DEFAULT CHARSET=utf8mb4
       COLLATE=utf8mb4_unicode_ci
     """
+    sql_reports = """
+    CREATE TABLE IF NOT EXISTS aso_analysis_reports (
+      id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      report_md        LONGTEXT     NOT NULL,
+      triggered_by     ENUM('auto_threshold','manual','weekly_full')
+                       DEFAULT 'auto_threshold',
+      keyword_count    INT          DEFAULT 0,
+      new_gold_count   INT          DEFAULT 0,
+      score_delta_sum  FLOAT        DEFAULT 0,
+      keywords_json    JSON,
+      prompt_version   INT UNSIGNED DEFAULT 1,
+      created_at       DATETIME     NOT NULL,
+      INDEX idx_created (created_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """
+
     conn = None
     try:
         conn = _get_connection_for_init()
@@ -202,6 +218,7 @@ def init_db() -> None:
             cur.execute(sql_jobs)
             cur.execute(sql_seeds)
             cur.execute(sql_evolution_log)
+            cur.execute(sql_reports)
         conn.commit()
 
         _new_columns = [
@@ -988,3 +1005,203 @@ def _compare_row_dict(row: dict, score_delta: int) -> dict:
         "reddit_post_count": int(row.get("reddit_post_count") or 0),
         "reddit_avg_score": float(row.get("reddit_avg_score") or 0),
     }
+
+
+# ===================== 报告相关查询 =====================
+
+
+def get_latest_report() -> dict | None:
+    """返回最新一份报告（不含 keywords_json）；不存在时返回 None。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, report_md, triggered_by, keyword_count,
+                       new_gold_count, score_delta_sum, prompt_version, created_at
+                FROM aso_analysis_reports
+                ORDER BY id DESC LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_latest_report 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_report_history(limit: int = 20) -> list[dict]:
+    """返回历史报告列表（不含 report_md 全文）。"""
+    limit = min(max(limit, 1), 50)
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, triggered_by, keyword_count, new_gold_count,
+                       score_delta_sum, prompt_version, created_at
+                FROM aso_analysis_reports
+                ORDER BY id DESC LIMIT %s
+                """,
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_report_history 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_report_by_id(report_id: int) -> dict | None:
+    """按 id 返回报告全文；不存在返回 None。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM aso_analysis_reports WHERE id = %s",
+                (report_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        logger.error("get_report_by_id 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_report(data: dict) -> int:
+    """插入一条报告，返回新记录 id。"""
+    kw_json = data.get("keywords_json")
+    if isinstance(kw_json, (list, dict)):
+        kw_json = json.dumps(kw_json, ensure_ascii=False)
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_analysis_reports
+                  (report_md, triggered_by, keyword_count, new_gold_count,
+                   score_delta_sum, keywords_json, prompt_version, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    data["report_md"],
+                    data.get("triggered_by", "auto_threshold"),
+                    int(data.get("keyword_count", 0)),
+                    int(data.get("new_gold_count", 0)),
+                    float(data.get("score_delta_sum", 0)),
+                    kw_json,
+                    int(data.get("prompt_version", 1)),
+                    data.get("created_at", datetime.now(timezone.utc).replace(tzinfo=None)),
+                ),
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+        return new_id
+    except Exception as exc:
+        logger.error("insert_report 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
+    """
+    返回 (top_keywords, new_keywords)：
+    - top_keywords: 最近14天 blue_ocean_score >= 60 的词，按 peak_score 降序，最多100条
+    - new_keywords: 7天内首次出现的高分词关键词名列表
+    """
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    keyword,
+                    MAX(blue_ocean_score)      AS peak_score,
+                    MAX(blue_ocean_label)      AS label,
+                    MAX(blue_ocean_flags)      AS flags,
+                    MAX(top_reviews)           AS top_reviews,
+                    MAX(concentration)         AS concentration,
+                    MAX(avg_update_age_months) AS avg_update_age_months,
+                    MAX(trend_gap)             AS trend_gap,
+                    MAX(rank_change)           AS rank_change,
+                    MAX(cross_platform)        AS cross_platform,
+                    MAX(trends_rising)         AS trends_rising,
+                    COUNT(DISTINCT DATE(scanned_at)) AS days_seen,
+                    MIN(scanned_at)            AS first_seen,
+                    MAX(scanned_at)            AS last_seen
+                FROM aso_keywords
+                WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+                  AND blue_ocean_score >= 60
+                GROUP BY keyword
+                ORDER BY peak_score DESC
+                LIMIT 100
+                """
+            )
+            top_keywords = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT DISTINCT keyword FROM aso_keywords
+                WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                  AND blue_ocean_score >= 60
+                  AND keyword NOT IN (
+                      SELECT DISTINCT keyword FROM aso_keywords
+                      WHERE scanned_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+                  )
+                """
+            )
+            new_keywords = [str(r["keyword"]) for r in cur.fetchall()]
+
+            return top_keywords, new_keywords
+    except Exception as exc:
+        logger.error("get_keyword_snapshot_for_report 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_recent_score_delta_sum(days: int = 7) -> float:
+    """近 N 天内各关键词 blue_ocean_score 变化绝对值之和。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(ABS(score_delta)), 0) AS total_delta
+                FROM (
+                    SELECT
+                        keyword,
+                        blue_ocean_score - LAG(blue_ocean_score)
+                            OVER (PARTITION BY keyword ORDER BY scanned_at) AS score_delta
+                    FROM aso_keywords
+                    WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ) t
+                WHERE score_delta IS NOT NULL
+                """,
+                (days,),
+            )
+            row = cur.fetchone()
+            return float(row["total_delta"]) if row else 0.0
+    except Exception as exc:
+        logger.error("get_recent_score_delta_sum 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
