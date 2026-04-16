@@ -79,6 +79,8 @@ a{color:#4f8ef7;text-decoration:none}
 .card--pending .card-value{color:#f5a623}
 .card--pruned .card-value{color:#e55353}
 .card--gen .card-value{color:#4f8ef7}
+.card{cursor:pointer;transition:transform .15s,box-shadow .15s}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
 
 /* 区块标题 */
 .section{margin-bottom:28px}
@@ -181,6 +183,59 @@ tr:hover td{background:rgba(79,142,247,.04)}
   .tl-item{flex-wrap:wrap;gap:6px}
   .tl-time{width:auto}
 }
+
+/* 弹窗 */
+.modal-overlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.7);z-index:1000;
+  display:none;align-items:center;justify-content:center;
+  padding:20px;
+}
+.modal-overlay.open{display:flex}
+.modal-content{
+  background:#1a1d27;border:1px solid #2d3148;border-radius:12px;
+  width:100%;max-width:600px;max-height:85vh;display:flex;flex-direction:column;
+}
+.modal-content-lg{max-width:800px}
+.modal-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px;border-bottom:1px solid #2d3148;
+}
+.modal-title{font-size:16px;font-weight:600}
+.modal-close{
+  background:none;border:none;color:#8b8fa3;font-size:24px;
+  cursor:pointer;line-height:1;padding:0;
+}
+.modal-close:hover{color:#e1e4eb}
+.modal-body{
+  flex:1;overflow-y:auto;padding:16px 20px;
+}
+.modal-footer{
+  padding:12px 20px;border-top:1px solid #2d3148;
+}
+.modal-pagination{
+  display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#8b8fa3;
+}
+.modal-pagination button{
+  background:#2d3148;border:none;color:#e1e4eb;padding:4px 10px;
+  border-radius:4px;cursor:pointer;font-size:13px;
+}
+.modal-pagination button:disabled{opacity:.5;cursor:not-allowed}
+.modal-seed-item{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 12px;border-bottom:1px solid #1e2236;cursor:pointer;
+}
+.modal-seed-item:hover{background:rgba(79,142,247,.08)}
+.modal-seed-item .seed-name{font-weight:500}
+.modal-seed-item .seed-meta{font-size:12px;color:#8b8fa3}
+.modal-kw-item{
+  display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #1e2236;
+}
+.modal-kw-item .kw-score{font-weight:600;min-width:40px}
+.modal-kw-item .kw-name{flex:1}
+.modal-kw-item .kw-meta{font-size:12px;color:#8b8fa3}
+.clickable{cursor:pointer;color:#4f8ef7}
+.clickable:hover{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -209,25 +264,25 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
     <!-- 概览卡片 -->
     <div class="cards">
-      <div class="card card--active">
+      <div class="card card--active" onclick="openSeedsModal('active')">
         <div class="card-icon">🟢</div>
         <div class="card-label">Active 种子</div>
         <div class="card-value" id="vActive">-</div>
         <div class="card-desc">参与当前扫描的种子</div>
       </div>
-      <div class="card card--pending">
+      <div class="card card--pending" onclick="openSeedsModal('pending')">
         <div class="card-icon">⏳</div>
         <div class="card-label">Pending 种子</div>
         <div class="card-value" id="vPending">-</div>
         <div class="card-desc">待验证激活，下次全量扫描时处理</div>
       </div>
-      <div class="card card--pruned">
+      <div class="card card--pruned" onclick="openSeedsModal('pruned')">
         <div class="card-icon">🗑️</div>
         <div class="card-label">已淘汰种子</div>
         <div class="card-value" id="vPruned">-</div>
         <div class="card-desc">长期低效已停用</div>
       </div>
-      <div class="card card--gen">
+      <div class="card card--gen" onclick="openSeedsModal(null)">
         <div class="card-icon">🧬</div>
         <div class="card-label">当前最大代数</div>
         <div class="card-value" id="vGen">-</div>
@@ -247,6 +302,35 @@ tr:hover td{background:rgba(79,142,247,.04)}
       <div id="timeline"></div>
     </div>
 
+  </div>
+</div>
+
+<!-- 弹窗：种子列表 -->
+<div class="modal-overlay" id="seedsModal" onclick="closeSeedsModal(event)">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="seedsModalTitle">种子列表</div>
+      <button class="modal-close" onclick="closeSeedsModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="seedsModalBody">
+      <div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>
+    </div>
+    <div class="modal-footer">
+      <div class="modal-pagination" id="seedsPagination"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 弹窗：种子关联关键词 -->
+<div class="modal-overlay" id="keywordsModal" onclick="closeKeywordsModal(event)">
+  <div class="modal-content modal-content-lg" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="keywordsModalTitle">关键词列表</div>
+      <button class="modal-close" onclick="closeKeywordsModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="keywordsModalBody">
+      <div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>
+    </div>
   </div>
 </div>
 
@@ -454,8 +538,121 @@ tr:hover td{background:rgba(79,142,247,.04)}
     }
   }
 
+  /* ========== 弹窗功能 ========== */
+  let currentSeedsPage = 1;
+  let currentSeedsStatus = 'active';
+  let seedsCache = {};
+
+  function openSeedsModal(status) {
+    currentSeedsStatus = status;
+    currentSeedsPage = 1;
+    const titles = { active: '🟢 Active 种子', pending: '⏳ Pending 种子', pruned: '🗑️ 已淘汰种子' };
+    $('seedsModalTitle').textContent = titles[status] || '🌱 全部种子';
+    $('seedsModal').classList.add('open');
+    loadSeedsPage(1);
+  }
+
+  function closeSeedsModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    $('seedsModal').classList.remove('open');
+  }
+
+  async function loadSeedsPage(page) {
+    currentSeedsPage = page;
+    const body = $('seedsModalBody');
+    body.innerHTML = '<div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>';
+
+    try {
+      const url = '/seeds/list?status=' + encodeURIComponent(currentSeedsStatus) + '&page=' + page + '&limit=20';
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+
+      seedsCache = data;
+      renderSeedsList(data.items);
+
+      // 分页
+      const pg = $('seedsPagination');
+      let pgHtml = '';
+      if (data.total_pages > 1) {
+        pgHtml = '<button ' + (page <= 1 ? 'disabled' : '') + ' onclick="loadSeedsPage(' + (page - 1) + ')">上一页</button>';
+        pgHtml += '<span>第 ' + page + '/' + data.total_pages + ' 页（共 ' + data.total + ' 条）</span>';
+        pgHtml += '<button ' + (page >= data.total_pages ? 'disabled' : '') + ' onclick="loadSeedsPage(' + (page + 1) + ')">下一页</button>';
+      }
+      pg.innerHTML = pgHtml;
+    } catch (err) {
+      body.innerHTML = '<div class="empty">加载失败: ' + err.message + '</div>';
+    }
+  }
+
+  function renderSeedsList(list) {
+    const body = $('seedsModalBody');
+    if (!list || list.length === 0) {
+      body.innerHTML = '<div class="empty">暂无种子</div>';
+      return;
+    }
+    let html = '';
+    for (const s of list) {
+      const srcBadge = s.source === 'generated'
+        ? '<span class="badge badge-ai">🤖 AI</span>'
+        : '<span class="badge badge-manual">✍️</span>';
+      html += '<div class="modal-seed-item" onclick="openKeywordsModal(\'' + encodeURIComponent(s.seed) + '\')">' +
+        '<div><div class="seed-name">' + escapeHtml(s.seed) + '</div>' +
+        '<div class="seed-meta">' + srcBadge + ' 第' + s.generation + '代</div></div>' +
+        '<div class="seed-meta">' + fmtShort(s.created_at) + '</div></div>';
+    }
+    body.innerHTML = html;
+  }
+
+  function openKeywordsModal(seed) {
+    seed = decodeURIComponent(seed);
+    $('keywordsModalTitle').textContent = '🔍 种子「' + escapeHtml(seed) + '」的关键词';
+    $('keywordsModal').classList.add('open');
+    loadSeedKeywords(seed);
+  }
+
+  function closeKeywordsModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    $('keywordsModal').classList.remove('open');
+  }
+
+  async function loadSeedKeywords(seed) {
+    const body = $('keywordsModalBody');
+    body.innerHTML = '<div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>';
+
+    try {
+      const url = '/seeds/' + encodeURIComponent(seed) + '/keywords?days=30&limit=100';
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+
+      if (!data.keywords || data.keywords.length === 0) {
+        body.innerHTML = '<div class="empty">该种子暂无关联关键词</div>';
+        return;
+      }
+
+      let html = '';
+      for (const kw of data.keywords) {
+        const label = kw.blue_ocean_label || '';
+        const scoreColor = kw.blue_ocean_score >= 80 ? '#f5a623' : (kw.blue_ocean_score >= 60 ? '#3ecf8e' : '#8b8fa3');
+        html += '<div class="modal-kw-item">' +
+          '<div class="kw-score" style="color:' + scoreColor + '">' + kw.blue_ocean_score + '</div>' +
+          '<div class="kw-name"><span class="clickable">' + escapeHtml(kw.keyword) + '</span></div>' +
+          '<div class="kw-meta">' + (kw.country || '-') + ' | ' + (kw.top_reviews || 0) + ' 评论</div></div>';
+      }
+      body.innerHTML = html;
+    } catch (err) {
+      body.innerHTML = '<div class="empty">加载失败: ' + err.message + '</div>';
+    }
+  }
+
   /* 暴露到全局供 onclick 调用 */
   window.loadData = loadData;
+  window.openSeedsModal = openSeedsModal;
+  window.closeSeedsModal = closeSeedsModal;
+  window.loadSeedsPage = loadSeedsPage;
+  window.openKeywordsModal = openKeywordsModal;
+  window.closeKeywordsModal = closeKeywordsModal;
 
   /* 验证登录后自动加载 */
   fetch('/auth/me').then(r => {

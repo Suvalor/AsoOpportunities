@@ -898,6 +898,122 @@ def get_seeds_status_snapshot() -> dict:
             conn.close()
 
 
+def get_seeds_list(
+    status: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+) -> tuple[list[dict], int]:
+    """
+    分页获取种子列表。
+    返回 (种子列表, 总数)
+    """
+    page = max(1, int(page))
+    limit = min(max(1, int(limit)), 200)
+    offset = (page - 1) * limit
+
+    conn = None
+    try:
+        conn = _get_connection()
+        # 先获取总数
+        if status:
+            count_sql = "SELECT COUNT(*) AS c FROM aso_seeds WHERE status = %s"
+            cur.execute(count_sql, (status,))
+        else:
+            count_sql = "SELECT COUNT(*) AS c FROM aso_seeds"
+            cur.execute(count_sql)
+        total = int(cur.fetchone()["c"] or 0)
+
+        # 获取列表
+        if status:
+            sql = """
+                SELECT seed, status, source, generation, created_at, updated_at
+                FROM aso_seeds
+                WHERE status = %s
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            """
+            cur.execute(sql, (status, limit, offset))
+        else:
+            sql = """
+                SELECT seed, status, source, generation, created_at, updated_at
+                FROM aso_seeds
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            """
+            cur.execute(sql, (limit, offset))
+
+        rows = []
+        for r in cur.fetchall():
+            rows.append({
+                "seed": r["seed"],
+                "status": r["status"],
+                "source": r["source"],
+                "generation": int(r["generation"] or 0),
+                "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+                    if hasattr(r["created_at"], "strftime")
+                    else str(r["created_at"]),
+                "updated_at": r["updated_at"].strftime("%Y-%m-%d %H:%M:%S")
+                    if hasattr(r["updated_at"], "strftime")
+                    else str(r["updated_at"]),
+            })
+        return rows, total
+    except Exception as exc:
+        logger.error("get_seeds_list 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_seed_keywords(
+    seed: str,
+    days: int = 30,
+    limit: int = 100,
+) -> list[dict]:
+    """
+    获取指定种子关联的关键词列表。
+    """
+    limit = min(max(1, int(limit)), 200)
+    days = max(1, int(days))
+
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT keyword, country, blue_ocean_score, blue_ocean_label,
+                       top_reviews, concentration, scanned_at
+                FROM aso_keywords
+                WHERE seed = %s
+                  AND scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ORDER BY blue_ocean_score DESC
+                LIMIT %s
+                """,
+                (seed, days, limit),
+            )
+            rows = []
+            for r in cur.fetchall():
+                rows.append({
+                    "keyword": r["keyword"],
+                    "country": r.get("country"),
+                    "blue_ocean_score": int(r["blue_ocean_score"] or 0),
+                    "blue_ocean_label": r.get("blue_ocean_label") or "",
+                    "top_reviews": r.get("top_reviews"),
+                    "concentration": float(r["concentration"]) if r.get("concentration") else None,
+                    "scanned_at": r["scanned_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r.get("scanned_at"), "strftime")
+                        else str(r.get("scanned_at") or ""),
+                })
+            return rows
+    except Exception as exc:
+        logger.error("get_seed_keywords 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def get_compare_analysis(
     days_recent: int = 7,
     days_baseline: int = 14,
