@@ -914,49 +914,50 @@ def get_seeds_list(
     conn = None
     try:
         conn = _get_connection()
-        # 先获取总数
-        if status:
-            count_sql = "SELECT COUNT(*) AS c FROM aso_seeds WHERE status = %s"
-            cur.execute(count_sql, (status,))
-        else:
-            count_sql = "SELECT COUNT(*) AS c FROM aso_seeds"
-            cur.execute(count_sql)
-        total = int(cur.fetchone()["c"] or 0)
+        with conn.cursor() as cur:
+            # 先获取总数
+            if status:
+                count_sql = "SELECT COUNT(*) AS c FROM aso_seeds WHERE status = %s"
+                cur.execute(count_sql, (status,))
+            else:
+                count_sql = "SELECT COUNT(*) AS c FROM aso_seeds"
+                cur.execute(count_sql)
+            total = int(cur.fetchone()["c"] or 0)
 
-        # 获取列表
-        if status:
-            sql = """
-                SELECT seed, status, source, generation, created_at, updated_at
-                FROM aso_seeds
-                WHERE status = %s
-                ORDER BY created_at DESC
-                LIMIT %s OFFSET %s
-            """
-            cur.execute(sql, (status, limit, offset))
-        else:
-            sql = """
-                SELECT seed, status, source, generation, created_at, updated_at
-                FROM aso_seeds
-                ORDER BY created_at DESC
-                LIMIT %s OFFSET %s
-            """
-            cur.execute(sql, (limit, offset))
+            # 获取列表
+            if status:
+                sql = """
+                    SELECT seed, status, source, generation, created_at, updated_at
+                    FROM aso_seeds
+                    WHERE status = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                """
+                cur.execute(sql, (status, limit, offset))
+            else:
+                sql = """
+                    SELECT seed, status, source, generation, created_at, updated_at
+                    FROM aso_seeds
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                """
+                cur.execute(sql, (limit, offset))
 
-        rows = []
-        for r in cur.fetchall():
-            rows.append({
-                "seed": r["seed"],
-                "status": r["status"],
-                "source": r["source"],
-                "generation": int(r["generation"] or 0),
-                "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
-                    if hasattr(r["created_at"], "strftime")
-                    else str(r["created_at"]),
-                "updated_at": r["updated_at"].strftime("%Y-%m-%d %H:%M:%S")
-                    if hasattr(r["updated_at"], "strftime")
-                    else str(r["updated_at"]),
-            })
-        return rows, total
+            rows = []
+            for r in cur.fetchall():
+                rows.append({
+                    "seed": r["seed"],
+                    "status": r["status"],
+                    "source": r["source"],
+                    "generation": int(r["generation"] or 0),
+                    "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r["created_at"], "strftime")
+                        else str(r["created_at"]),
+                    "updated_at": r["updated_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r["updated_at"], "strftime")
+                        else str(r["updated_at"]),
+                })
+            return rows, total
     except Exception as exc:
         logger.error("get_seeds_list 失败: %s", exc)
         raise
@@ -1000,7 +1001,7 @@ def get_seed_keywords(
                     "blue_ocean_score": int(r["blue_ocean_score"] or 0),
                     "blue_ocean_label": r.get("blue_ocean_label") or "",
                     "top_reviews": r.get("top_reviews"),
-                    "concentration": float(r["concentration"]) if r.get("concentration") else None,
+                    "concentration": float(r["concentration"]) if r.get("concentration") is not None else None,
                     "scanned_at": r["scanned_at"].strftime("%Y-%m-%d %H:%M:%S")
                         if hasattr(r.get("scanned_at"), "strftime")
                         else str(r.get("scanned_at") or ""),

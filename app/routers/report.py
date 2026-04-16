@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Annotated
 
@@ -129,7 +130,7 @@ def report_detail(
     kw_json = row.get("keywords_json")
     if isinstance(kw_json, str):
         try:
-            kw_json = __import__("json").loads(kw_json)
+            kw_json = json.loads(kw_json)
         except Exception:
             pass
 

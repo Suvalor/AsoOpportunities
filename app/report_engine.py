@@ -72,7 +72,7 @@ def should_generate_report() -> tuple[bool, str, dict]:
 
     snapshot = get_current_keyword_snapshot()
 
-    prev_count = latest["keyword_count"] if latest else 0
+    prev_count = (latest.get("keyword_count") or 0) if latest else 0
     curr_count = snapshot["total_qualified"]
     count_delta = abs(curr_count - prev_count)
 

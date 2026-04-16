@@ -42,7 +42,7 @@ def auth_register(body: AuthBody) -> dict:
     except Exception as exc:
         if "Duplicate" in str(exc):
             raise HTTPException(status_code=409, detail="用户名已存在")
-        raise
+        raise HTTPException(status_code=500, detail="注册失败，请稍后重试") from exc
 
     return {"id": new_id, "username": body.username, "role": role}
 

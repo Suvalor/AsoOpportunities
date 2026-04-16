@@ -36,6 +36,11 @@ def seeds_list(
     limit: int = Query(default=50, ge=1, le=200, description="每页数量"),
 ) -> dict:
     """分页获取种子列表（需鉴权）。"""
+    if status is not None and status not in ("active", "pending", "pruned"):
+        raise HTTPException(
+            status_code=400,
+            detail="status 参数须为 active/pending/pruned 或不传",
+        )
     rows, total = get_seeds_list(status=status, page=page, limit=limit)
     total_pages = (total + limit - 1) // limit if limit > 0 else 0
     return {

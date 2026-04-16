@@ -163,7 +163,7 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
 
     try:
         assistant_text = call_agent("seed_evolution", user_prompt, max_tokens=1000)
-    except (ValueError, Exception) as e:
+    except Exception as e:
         print(f"[Evolution] 智能体调用失败: {e}")
         append_evolution_log(
             batch_id,

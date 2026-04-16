@@ -65,14 +65,14 @@ def get_competition(
         response = requests.get(ITUNES_URL, params=params, timeout=10)
         response.raise_for_status()
         apps = response.json().get("results", [])
+        # 只在请求成功时 sleep，避免失败时不必要的延迟
+        time.sleep(sleep)
     except requests.RequestException as exc:
         logger.warning("iTunes 请求失败 [%s]: %s", keyword, exc)
         return empty_result
     except ValueError as exc:
         logger.warning("iTunes 解析 JSON 失败 [%s]: %s", keyword, exc)
         return empty_result
-    finally:
-        time.sleep(sleep)
 
     if not apps:
         return empty_result
