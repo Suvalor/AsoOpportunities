@@ -41,6 +41,24 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 @app.on_event("startup")
 def on_startup() -> None:
     """应用启动时初始化数据库表结构。"""
+    # 检查 API_KEY 配置
+    api_key = os.getenv("API_KEY", "")
+    if not api_key:
+        print("=" * 50)
+        print("[警告] 环境变量 API_KEY 未设置，所有 API 请求将被拒绝。")
+        print("  请在 .env 文件中设置 API_KEY 后重启服务。")
+        print("=" * 50)
+        logger.warning("API_KEY 未配置")
+
+    # 检查 JWT_SECRET 配置
+    jwt_secret = os.getenv("JWT_SECRET", "")
+    if not jwt_secret:
+        print("=" * 50)
+        print("[警告] 环境变量 JWT_SECRET 未设置，JWT 认证将不可用。")
+        print("  请在 .env 文件中设置 JWT_SECRET 后重启服务。")
+        print("=" * 50)
+        logger.warning("JWT_SECRET 未配置")
+
     init_db()
     logger.info("数据库 init_db 完成")
 
