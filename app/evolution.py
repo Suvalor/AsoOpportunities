@@ -92,7 +92,11 @@ def prune_weak_seeds(batch_id: str) -> list[str]:
         kw_n = int(r["keyword_count"] or 0)
         strong = int(r["strong_count"] or 0)
         avg = float(r["avg_blue_ocean_score"] or 0)
-        if strong == 0 and avg < _WEAK_AVG_SCORE and kw_n >= _WEAK_MIN_KEYWORDS:
+        # 无产出直接剪
+        if kw_n == 0:
+            candidates.append((seed, 0))
+        # 产出同质（强词为 0）且均分偏低且样本足够
+        elif strong == 0 and avg < _WEAK_AVG_SCORE and kw_n >= _WEAK_MIN_KEYWORDS:
             candidates.append((seed, avg))
 
     candidates.sort(key=lambda x: x[1])
@@ -133,6 +137,21 @@ def _parse_seed_list_from_llm(text: str) -> list[str]:
     return out
 
 
+def _is_too_similar(new_seed: str, existing_seeds: list[str], threshold: float = 0.6) -> bool:
+    """检查新种子是否与现有种子过于相似（词重叠率 Jaccard）。"""
+    new_words = set(new_seed.lower().split())
+    if not new_words:
+        return True
+    for existing in existing_seeds:
+        exist_words = set(existing.lower().split())
+        if not exist_words:
+            continue
+        overlap = len(new_words & exist_words) / max(len(new_words | exist_words), 1)
+        if overlap >= threshold:
+            return True
+    return False
+
+
 def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
     """
     基于本批次高分关键词调用 Claude 生成新种子，仅写入 pending。
@@ -153,12 +172,29 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
             f"cross_platform={r.get('cross_platform', 0)} "
             f"trends_rising={r.get('trends_rising', 0)}"
         )
+
+    # 获取现有 active 种子用于去重提示
+    active_seeds = get_active_seeds()
+    existing_preview = ", ".join(s for s in active_seeds[:30])
+    if len(active_seeds) > 30:
+        existing_preview += f" ... (共{len(active_seeds)}个)"
+
     user_prompt = (
-        "你是 ASO 关键词研究助手。根据下列高蓝海分关键词，提出 "
-        f"{top_n} 个以内、简短英文或常见 App Store 搜索风格的「种子词/短语」，"
-        "用于后续 autocomplete 扩展；避免与列表中已有 keyword 完全重复，"
-        "不要解释，只输出一个 JSON 字符串数组，例如 [\"foo bar\",\"baz\"]。\n\n"
+        "你是 ASO 关键词研究专家，专注 App Store 长尾需求挖掘。\n"
+        f"根据下列高蓝海分关键词数据，提出 {top_n} 个以内的新种子词/短语，"
+        "用于 autocomplete 扩展。\n\n"
+        "种子词要求：\n"
+        "1. 必须是用户真实搜索意图，不是品类名"
+        "（❌ 'truck rental' → ✅ 'rent a pickup truck for moving'）\n"
+        "2. 优先选择痛点场景词：用户在什么具体困境下会搜索？"
+        "（如 'split rent with roommate'）\n"
+        f"3. 避免与已有种子重复或仅做微调（已有种子：{existing_preview}）\n"
+        "4. 长度 2-6 个英文单词，模拟真实 App Store 搜索查询\n"
+        "5. 每个种子应覆盖一个独特的用户场景，不要生成同场景的多个变体\n\n"
+        "高分关键词数据：\n"
         + "\n".join(lines)
+        + "\n\n只输出一个 JSON 字符串数组，"
+        "例如 [\"split rent with roommate\",\"track pet vaccination\"]。不要解释。"
     )
 
     try:
@@ -190,6 +226,9 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
             continue
         low = s.lower()
         if low in seen:
+            continue
+        # 与现有 active 种子去重（Jaccard 相似度）
+        if _is_too_similar(s, active_seeds):
             continue
         seen.add(low)
         cleaned.append(s)

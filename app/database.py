@@ -501,6 +501,7 @@ def get_top_keywords(
 ) -> list[dict]:
     """
     按时间窗口与可选标签、可选国家列表筛选，按 blue_ocean_score 降序返回关键词摘要。
+    同一 (keyword, country) 只保留最高分那条，避免跨批次/跨种子重复。
     countries 为 None 时不过滤国家；传入时仅保留 country IN (...) 的行。
     cross_platform=True 时仅返回双平台词；trends_only=True 时仅返回 Trends 上升词。
     limit 最大 200。
@@ -531,6 +532,7 @@ def get_top_keywords(
                 where_extra += " AND trends_rising = 1"
             params.append(limit)
 
+            # 按 (keyword, country) 去重，保留 blue_ocean_score 最高的一条
             sql = f"""
                     SELECT keyword, country, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
                            top_reviews, concentration, avg_update_age_months,
@@ -539,9 +541,16 @@ def get_top_keywords(
                            gplay_top_installs_num, gplay_avg_rating, cross_platform,
                            trends_rising, trends_rising_count,
                            reddit_post_count, reddit_avg_score
-                    FROM aso_keywords
-                    WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
-                      {where_extra}
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY keyword, country
+                            ORDER BY blue_ocean_score DESC, scanned_at DESC
+                        ) AS rn
+                        FROM aso_keywords
+                        WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                          {where_extra}
+                    ) t
+                    WHERE rn = 1
                     ORDER BY blue_ocean_score DESC
                     LIMIT %s
                     """
@@ -656,7 +665,7 @@ def get_seed_performance_by_batch(batch_id: str) -> list[dict]:
                   COUNT(*) AS keyword_count,
                   AVG(blue_ocean_score) AS avg_blue_ocean_score,
                   MAX(blue_ocean_score) AS max_blue_ocean_score,
-                  SUM(CASE WHEN blue_ocean_score >= 60 THEN 1 ELSE 0 END) AS strong_count,
+                  SUM(CASE WHEN blue_ocean_score >= 55 THEN 1 ELSE 0 END) AS strong_count,
                   AVG(CASE WHEN cross_platform = 1 THEN 1.0 ELSE 0 END) AS cross_platform_ratio,
                   AVG(CASE WHEN trends_rising = 1 THEN 1.0 ELSE 0 END) AS trends_ratio
                 FROM aso_keywords
@@ -792,6 +801,7 @@ def max_seed_generation() -> int:
 
 
 def get_top_keywords_for_batch(batch_id: str, limit: int) -> list[dict]:
+    """按批次获取高分关键词，同一 keyword 只保留最高分那条。"""
     conn = None
     try:
         conn = _get_connection()
@@ -800,8 +810,15 @@ def get_top_keywords_for_batch(batch_id: str, limit: int) -> list[dict]:
                 """
                 SELECT keyword, blue_ocean_score, seed, blue_ocean_flags,
                        cross_platform, trends_rising
-                FROM aso_keywords
-                WHERE scan_batch_id = %s
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY keyword
+                        ORDER BY blue_ocean_score DESC
+                    ) AS rn
+                    FROM aso_keywords
+                    WHERE scan_batch_id = %s
+                ) t
+                WHERE rn = 1
                 ORDER BY blue_ocean_score DESC
                 LIMIT %s
                 """,
@@ -973,6 +990,7 @@ def get_seed_keywords(
 ) -> list[dict]:
     """
     获取指定种子关联的关键词列表。
+    同一 (keyword, country) 只保留最高分那条，避免跨批次重复。
     """
     limit = min(max(1, int(limit)), 200)
     days = max(1, int(days))
@@ -985,9 +1003,16 @@ def get_seed_keywords(
                 """
                 SELECT keyword, country, blue_ocean_score, blue_ocean_label,
                        top_reviews, concentration, scanned_at
-                FROM aso_keywords
-                WHERE seed = %s
-                  AND scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY keyword, country
+                        ORDER BY blue_ocean_score DESC, scanned_at DESC
+                    ) AS rn
+                    FROM aso_keywords
+                    WHERE seed = %s
+                      AND scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ) t
+                WHERE rn = 1
                 ORDER BY blue_ocean_score DESC
                 LIMIT %s
                 """,
@@ -1392,7 +1417,7 @@ def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
 
 
 def get_recent_score_delta_sum(days: int = 7) -> float:
-    """近 N 天内各关键词 blue_ocean_score 变化绝对值之和。"""
+    """近 N 天内各关键词 blue_ocean_score 变化绝对值之和。按 (keyword, country) 去重后计算。"""
     conn = None
     try:
         conn = _get_connection()
@@ -1403,10 +1428,18 @@ def get_recent_score_delta_sum(days: int = 7) -> float:
                 FROM (
                     SELECT
                         keyword,
+                        country,
                         blue_ocean_score - LAG(blue_ocean_score)
-                            OVER (PARTITION BY keyword ORDER BY scanned_at) AS score_delta
-                    FROM aso_keywords
-                    WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                            OVER (PARTITION BY keyword, country ORDER BY scanned_at) AS score_delta
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY keyword, country, DATE(scanned_at)
+                            ORDER BY blue_ocean_score DESC
+                        ) AS rn
+                        FROM aso_keywords
+                        WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                    ) dedup
+                    WHERE rn = 1
                 ) t
                 WHERE score_delta IS NOT NULL
                 """,

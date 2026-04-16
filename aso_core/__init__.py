@@ -2,15 +2,13 @@
 ASO 核心逻辑包：采集、竞争评估、扫描流水线、蓝海评分与统一配置。
 """
 
-from .config_data import SEEDS, SCENES, VERBS
+from .config_data import SEEDS
 from .scanner import PRIMARY_COUNTRY, SCAN_COUNTRIES, run_full_scan
 from .scorer import blue_ocean_label, blue_ocean_score
 from .settings import Settings, get_settings
 
 __all__ = [
     "SEEDS",
-    "SCENES",
-    "VERBS",
     "PRIMARY_COUNTRY",
     "SCAN_COUNTRIES",
     "Settings",

@@ -106,15 +106,24 @@ def get_competition(
 
 
 def opportunity_score(autocomplete_rank: int, competition: dict) -> float:
-    """计算关键词机会分（float，保留两位小数）。"""
+    """计算关键词机会分（float，保留两位小数）。
+
+    v2：指数衰减 + 竞争数量修正，替代 v1 的 log10 除法。
+    """
     volume_proxy = 20 - autocomplete_rank
     if volume_proxy <= 0:
         return 0.0
 
     top_reviews = max(competition.get("top_reviews", 0), 0)
-    competition_strength = math.log10(top_reviews + 1) if top_reviews > 0 else 1.0
 
-    if competition_strength == 0:
+    # 竞争强度：指数衰减，替代 log10
+    competition_strength = math.exp(0.0002 * top_reviews)
+
+    # 竞争数量修正：结果越多竞争越激烈
+    app_count = competition.get("count", 0)
+    count_penalty = 1 + 0.02 * min(app_count, 50)
+
+    if competition_strength <= 0:
         return round(float(volume_proxy) * 10, 2)
 
-    return round(volume_proxy / competition_strength, 2)
+    return round(volume_proxy / (competition_strength * count_penalty), 2)
