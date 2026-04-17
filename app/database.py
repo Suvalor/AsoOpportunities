@@ -106,6 +106,19 @@ def bootstrap_default_seeds_if_empty() -> None:
             conn.close()
 
 
+_ALLOWED_TABLES = frozenset({
+    "aso_keywords", "aso_scan_jobs", "aso_seeds",
+    "aso_seed_evolution_log", "aso_analysis_reports", "aso_users",
+    "aso_agents", "aso_agent_assignments",
+})
+
+_ALLOWED_COLUMNS = frozenset({
+    "gplay_autocomplete_rank", "gplay_top_reviews", "gplay_top_installs",
+    "gplay_top_installs_num", "gplay_avg_rating", "cross_platform",
+    "trends_rising", "trends_rising_count", "reddit_post_count", "reddit_avg_score",
+})
+
+
 def _add_column_if_not_exists(
     conn: pymysql.connections.Connection,
     table: str,
@@ -113,6 +126,10 @@ def _add_column_if_not_exists(
     definition: str,
 ) -> None:
     """若列不存在则 ALTER TABLE ADD COLUMN（MySQL 8.0 兼容）。"""
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"不允许的表名: {table!r}")
+    if column not in _ALLOWED_COLUMNS:
+        raise ValueError(f"不允许的列名: {column!r}")
     check_sql = """
         SELECT COUNT(*) AS c FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
@@ -123,6 +140,7 @@ def _add_column_if_not_exists(
         cur.execute(check_sql, (table, column))
         row = cur.fetchone()
         if row and int(row["c"]) == 0:
+            # table/column 已通过白名单校验，definition 来自内部常量
             cur.execute(
                 f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}"
             )
@@ -370,6 +388,8 @@ def update_job(
     error: str | None = None,
 ) -> None:
     """更新任务状态；status 为 done 或 failed 时写入 finished_at。"""
+    if status not in ("running", "done", "failed"):
+        raise ValueError(f"不允许的 status 值: {status!r}")
     set_parts: list[str] = ["status=%s"]
     params: list[Any] = [status]
     if total is not None:
@@ -1386,7 +1406,7 @@ def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
                     MAX(scanned_at)            AS last_seen
                 FROM aso_keywords
                 WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-                  AND blue_ocean_score >= 60
+                  AND blue_ocean_score >= 55
                 GROUP BY keyword
                 ORDER BY peak_score DESC
                 LIMIT 100
@@ -1398,7 +1418,7 @@ def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
                 """
                 SELECT DISTINCT keyword FROM aso_keywords
                 WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-                  AND blue_ocean_score >= 60
+                  AND blue_ocean_score >= 55
                   AND keyword NOT IN (
                       SELECT DISTINCT keyword FROM aso_keywords
                       WHERE scanned_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
@@ -1615,6 +1635,10 @@ def insert_agent(data: dict) -> int:
 
 def update_agent(agent_id: int, data: dict) -> None:
     """更新智能体，data 中不含 api_key_enc 时不更新密钥。"""
+    _ALLOWED_FIELDS = frozenset({
+        "name", "base_url", "model", "version",
+        "api_key_enc", "api_key_preview", "is_active",
+    })
     set_parts: list[str] = []
     params: list[Any] = []
     for field in ("name", "base_url", "model", "version"):

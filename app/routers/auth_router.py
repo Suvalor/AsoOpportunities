@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Annotated
 
@@ -64,6 +65,7 @@ def auth_login(body: AuthBody) -> JSONResponse:
         key="access_token",
         value=token,
         httponly=True,
+        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
         samesite="lax",
         path="/",
         max_age=JWT_EXPIRE_HOURS * 3600,

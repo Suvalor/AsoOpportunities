@@ -30,7 +30,7 @@ from ..evolution import run_evolution_after_full_scan
 
 logger = logging.getLogger(__name__)
 
-TRACKING_MIN_BLUE_SCORE = 60
+TRACKING_MIN_BLUE_SCORE = 55
 TRACKING_SEED_LOOKBACK_DAYS = 30
 
 _ISO_A2 = re.compile(r"^[a-z]{2}$")

@@ -125,10 +125,10 @@ def create_agent_endpoint(
     except pymysql.err.OperationalError as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"数据库不可用或连接失败：{exc.args[1] if exc.args else str(exc)}",
+            detail="数据库服务暂时不可用",
         ) from exc
     except pymysql.err.IntegrityError as exc:
-        raise HTTPException(status_code=400, detail=f"数据写入失败：{exc}") from exc
+        raise HTTPException(status_code=400, detail="数据写入失败") from exc
 
     agent = get_agent_by_id(new_id)
     return _agent_to_dict(agent) if agent else {"id": new_id}

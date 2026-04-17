@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import Cookie, Depends, Header, HTTPException
@@ -16,9 +17,9 @@ from . import user_auth
 
 
 def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> None:
-    """校验 API 密钥；缺失或不匹配时返回 401。"""
+    """校验 API 密钥；缺失或不匹配时返回 401。使用恒定时间比较防止时序攻击。"""
     expected = os.getenv("API_KEY", "")
-    if not x_api_key or x_api_key != expected:
+    if not x_api_key or not hmac.compare_digest(x_api_key, expected):
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
 
@@ -45,9 +46,9 @@ def verify_api_key_or_cookie(
     x_api_key: str | None = Header(None, alias="X-API-Key"),
     access_token: str | None = Cookie(default=None),
 ) -> None:
-    """双鉴权：X-API-Key 或 JWT Cookie 任一有效即通过。"""
+    """双鉴权：X-API-Key 或 JWT Cookie 任一有效即通过。使用恒定时间比较防止时序攻击。"""
     expected = os.getenv("API_KEY", "")
-    if x_api_key and x_api_key == expected:
+    if x_api_key and hmac.compare_digest(x_api_key, expected):
         return
     if access_token:
         try:
