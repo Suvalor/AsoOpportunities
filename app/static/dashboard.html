@@ -94,7 +94,7 @@ body{
     <button class="btn-logout" onclick="doLogout()">退出</button>
   </div>
 </nav>
-<iframe class="main-frame" id="mainFrame" src="/static/seeds-dashboard.html"></iframe>
+<iframe class="main-frame" id="mainFrame" src="/static/seeds-dashboard.html?_t=0"></iframe>
 
 <script>
 (function(){
@@ -107,7 +107,10 @@ body{
   function switchTab(tab) {
     tabs.forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    frame.src = tab.dataset.src;
+    // 添加时间戳参数破坏浏览器缓存，强制重新加载 iframe 内容
+    const url = tab.dataset.src;
+    const separator = url.includes('?') ? '&' : '?';
+    frame.src = url + separator + '_t=' + Date.now();
   }
 
   tabs.forEach(tab => {
