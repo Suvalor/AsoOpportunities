@@ -46,6 +46,8 @@ a{color:#4f8ef7;text-decoration:none}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn-generate{background:#3ecf8e}
 .btn-generate.highlight{background:#f5a623;animation:pulse 1.5s infinite}
+.btn-scan{background:#a78bfa}
+.btn-scan.scanning{background:#f5a623;animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
 
 .alert{
@@ -250,6 +252,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
     <div class="header-right">
       <span class="header-time" id="lastUpdate"></span>
       <button class="btn" id="btnRefresh" onclick="loadData()" style="display:none">🔄 刷新</button>
+      <button class="btn btn-scan" id="btnScan" onclick="scanManager.startScan()" style="display:none">📡 全盘扫描</button>
       <button class="btn btn-generate" id="btnGenerate" onclick="generateReport()" style="display:none">📝 生成报告</button>
     </div>
   </div>
@@ -416,6 +419,167 @@ tr:hover td{background:rgba(79,142,247,.04)}
   let latestData = null;
   let expandedId = null;
 
+  /* ========== 扫描管理器 ========== */
+  const scanManager = {
+    currentBatchId: null,
+    pollInterval: null,
+    pollCount: 0,
+    MAX_POLLS: 3600, // 最多轮询 1 小时（每秒一次）
+
+    async startScan() {
+      // 防重：如果已经在扫描中，直接返回
+      if (this.currentBatchId) {
+        showWarning('扫描正在进行中，请稍候...');
+        return;
+      }
+
+      const btn = $('btnScan');
+      btn.disabled = true;
+      btn.classList.add('scanning');
+      btn.textContent = '⏳ 扫描中...';
+      hideError();
+      hideWarning();
+
+      try {
+        // 发起后台扫描任务
+        const resp = await fetch('/scan/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'full' })
+        });
+
+        if (resp.status === 401) {
+          window.top.location.href = '/static/index.html';
+          return;
+        }
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          showError('启动扫描失败: ' + (err.detail || 'HTTP ' + resp.status));
+          btn.disabled = false;
+          btn.classList.remove('scanning');
+          btn.textContent = '📡 全盘扫描';
+          return;
+        }
+
+        const data = await resp.json();
+        this.currentBatchId = data.batch_id;
+        this.pollCount = 0;
+        showSuccess('✅ 扫描任务已启动，正在后台执行...');
+
+        // 开始轮询状态
+        this.pollStatus();
+
+      } catch (err) {
+        showError('启动扫描失败: ' + err.message);
+        btn.disabled = false;
+        btn.classList.remove('scanning');
+        btn.textContent = '📡 全盘扫描';
+      }
+    },
+
+    pollStatus() {
+      // 防止重复轮询
+      if (this.pollInterval) {
+        clearInterval(this.pollInterval);
+      }
+
+      this.pollInterval = setInterval(async () => {
+        if (!this.currentBatchId) {
+          clearInterval(this.pollInterval);
+          this.pollInterval = null;
+          return;
+        }
+
+        this.pollCount++;
+
+        // 熔断机制：超过最大轮询次数则停止
+        if (this.pollCount > this.MAX_POLLS) {
+          clearInterval(this.pollInterval);
+          this.pollInterval = null;
+          showError('⚠️ 扫描超时（1小时未完成），请稍后查询状态');
+          this.handleScanFailure();
+          return;
+        }
+
+        try {
+          const resp = await fetch(`/scan/status/${this.currentBatchId}`);
+
+          if (resp.status === 401) {
+            window.top.location.href = '/static/index.html';
+            return;
+          }
+
+          if (!resp.ok) {
+            if (resp.status === 404) {
+              showError('任务不存在或已过期');
+              this.handleScanFailure();
+            } else {
+              // 继续轮询，可能是临时网络问题
+            }
+            return;
+          }
+
+          const jobData = await resp.json();
+          const status = jobData.status;
+
+          if (status === 'done') {
+            // 扫描完成
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+            this.handleScanSuccess(jobData);
+
+          } else if (status === 'failed') {
+            // 扫描失败
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+            const error = jobData.error || '未知错误';
+            showError('❌ 扫描失败: ' + error);
+            this.handleScanFailure();
+
+          } else if (status === 'running') {
+            // 继续运行，更新 UI
+            const btn = $('btnScan');
+            const progress = jobData.keywords_found || 0;
+            btn.textContent = `⏳ 扫描中... (${progress} 词)`;
+          }
+
+        } catch (err) {
+          // 网络错误不应中断轮询，继续重试
+          console.warn('轮询状态失败:', err.message);
+        }
+      }, 1000); // 每秒轮询一次
+    },
+
+    handleScanSuccess(jobData) {
+      const btn = $('btnScan');
+      btn.disabled = false;
+      btn.classList.remove('scanning');
+      btn.textContent = '📡 全盘扫描';
+
+      const kwCount = jobData.keywords_found || 0;
+      showSuccess(`✅ 扫描完成！发现 ${kwCount} 个关键词`);
+
+      this.currentBatchId = null;
+      this.pollCount = 0;
+
+      // 自动刷新数据和检查报告生成条件
+      setTimeout(() => {
+        loadData();
+      }, 1000);
+    },
+
+    handleScanFailure() {
+      const btn = $('btnScan');
+      btn.disabled = false;
+      btn.classList.remove('scanning');
+      btn.textContent = '📡 全盘扫描';
+
+      this.currentBatchId = null;
+      this.pollCount = 0;
+    }
+  };
+
   /* ========== 渲染 ========== */
   function renderCards(latest) {
     if (!latest || !latest.id) {
@@ -579,6 +743,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
       $('btnRefresh').style.display = 'inline-block';
       $('btnGenerate').style.display = 'inline-block';
+      $('btnScan').style.display = 'inline-block';
       $('mainContent').style.display = 'block';
 
       if (check && check.should_generate) {
@@ -667,6 +832,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
   window.viewReport = viewReport;
   window.openKeywordsModal = openKeywordsModal;
   window.closeKeywordsModal = closeKeywordsModal;
+  window.scanManager = scanManager;
 
   fetch('/auth/me').then(r => {
     if (!r.ok) { window.top.location.href = '/static/index.html'; return; }
