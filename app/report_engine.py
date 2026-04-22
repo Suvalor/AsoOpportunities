@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 
 from .agent_client import call_agent
@@ -19,6 +20,9 @@ from .database import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 互斥锁：同一时刻只允许一个报告生成任务执行
+_report_lock = threading.Lock()
 
 
 def get_current_keyword_snapshot() -> dict:
@@ -194,44 +198,53 @@ def build_report_prompt(
 def run_report_generation(triggered_by: str = "auto_threshold") -> dict:
     """
     完整报告生成流程：快照 -> Prompt -> 智能体调用 -> 入库。
+    使用互斥锁保证同一时刻仅一个报告生成任务执行；
+    若锁已被占用则立即返回 {"skipped": True, "reason": "locked"}。
     返回新报告的摘要字典。
     """
-    snapshot = get_current_keyword_snapshot()
-    latest_report = get_latest_report()
-    prompt, prompt_version = build_report_prompt(snapshot, latest_report)
+    if not _report_lock.acquire(blocking=False):
+        logger.warning("报告生成互斥锁已被占用，跳过本次 triggered_by=%s", triggered_by)
+        return {"skipped": True, "reason": "locked"}
 
-    report_md = call_agent("keyword_report", prompt, max_tokens=4000)
+    try:
+        snapshot = get_current_keyword_snapshot()
+        latest_report = get_latest_report()
+        prompt, prompt_version = build_report_prompt(snapshot, latest_report)
 
-    new_gold = len([
-        k for k in snapshot["new_keywords"]
-        if k.get("label") == "💎 金矿"
-    ])
-    score_delta = get_recent_score_delta_sum(days=7)
+        report_md = call_agent("keyword_report", prompt, max_tokens=4000)
 
-    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        new_gold = len([
+            k for k in snapshot["new_keywords"]
+            if k.get("label") == "💎 金矿"
+        ])
+        score_delta = get_recent_score_delta_sum(days=7)
 
-    report_data = {
-        "report_md": report_md,
-        "triggered_by": triggered_by,
-        "keyword_count": snapshot["total_qualified"],
-        "new_gold_count": new_gold,
-        "score_delta_sum": score_delta,
-        "keywords_json": snapshot["top_keywords"],
-        "prompt_version": prompt_version,
-        "created_at": now_utc,
-    }
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    report_id = insert_report(report_data)
+        report_data = {
+            "report_md": report_md,
+            "triggered_by": triggered_by,
+            "keyword_count": snapshot["total_qualified"],
+            "new_gold_count": new_gold,
+            "score_delta_sum": score_delta,
+            "keywords_json": snapshot["top_keywords"],
+            "prompt_version": prompt_version,
+            "created_at": now_utc,
+        }
 
-    logger.info(
-        "报告生成完成 id=%d triggered_by=%s keyword_count=%d",
-        report_id, triggered_by, snapshot["total_qualified"],
-    )
+        report_id = insert_report(report_data)
 
-    return {
-        "report_id": report_id,
-        "triggered_by": triggered_by,
-        "keyword_count": snapshot["total_qualified"],
-        "new_gold_count": new_gold,
-        "created_at": now_utc.strftime("%Y-%m-%d %H:%M:%S"),
-    }
+        logger.info(
+            "报告生成完成 id=%d triggered_by=%s keyword_count=%d",
+            report_id, triggered_by, snapshot["total_qualified"],
+        )
+
+        return {
+            "report_id": report_id,
+            "triggered_by": triggered_by,
+            "keyword_count": snapshot["total_qualified"],
+            "new_gold_count": new_gold,
+            "created_at": now_utc.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    finally:
+        _report_lock.release()

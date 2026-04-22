@@ -4,6 +4,7 @@
 - get_current_user：JWT Cookie 鉴权（供浏览器页面调用）
 - require_admin：管理员角色检查
 - verify_api_key_or_cookie：双鉴权，任一有效即通过
+- verify_public_or_auth：公开接口鉴权，未登录返回 None，已登录返回 user dict
 """
 
 from __future__ import annotations
@@ -57,3 +58,23 @@ def verify_api_key_or_cookie(
         except Exception:
             pass
     raise HTTPException(status_code=401, detail="未授权：需要有效的 API Key 或登录凭证")
+
+
+def verify_public_or_auth(
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    access_token: str | None = Cookie(default=None),
+) -> dict | None:
+    """公开接口鉴权：未登录时返回 None（允许访问），已登录时返回 user dict。
+
+    用于种子进化、关键词洞察等只读接口——无论是否登录都能查看数据，
+    但前端可根据返回值决定是否显示写操作按钮（全盘扫描、生成报告等）。
+    """
+    expected = os.getenv("API_KEY", "")
+    if x_api_key and hmac.compare_digest(x_api_key, expected):
+        return {"role": "api_key", "username": "api_user"}
+    if access_token:
+        try:
+            return user_auth.decode_token(access_token)
+        except Exception:
+            pass
+    return None

@@ -3,843 +3,243 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ASO 关键词洞察报告</title>
-<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<title>关键词洞察</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{
-  background:#0f1117;
-  color:#e1e4eb;
-  font-family:system-ui,-apple-system,sans-serif;
-  line-height:1.6;
-  min-height:100vh;
-  padding:0 16px 40px;
-}
-a{color:#4f8ef7;text-decoration:none}
-
-.container{max-width:960px;margin:0 auto}
-
-.header{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  flex-wrap:wrap;
-  gap:12px;
-  padding:20px 0 16px;
-  border-bottom:1px solid #2d3148;
-  margin-bottom:20px;
-}
-.header-title{font-size:20px;font-weight:700;white-space:nowrap}
-.header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.header-time{font-size:13px;color:#8b8fa3;font-family:monospace}
-.btn{
-  background:#4f8ef7;
-  color:#fff;
-  border:none;
-  padding:7px 16px;
-  border-radius:6px;
-  font-size:14px;
-  cursor:pointer;
-  white-space:nowrap;
-  transition:opacity .15s;
-}
-.btn:hover{opacity:.85}
-.btn:disabled{opacity:.45;cursor:not-allowed}
-.btn-generate{background:#3ecf8e}
-.btn-generate.highlight{background:#f5a623;animation:pulse 1.5s infinite}
-.btn-scan{background:#a78bfa}
-.btn-scan.scanning{background:#f5a623;animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
-
-.alert{
-  padding:10px 16px;
-  border-radius:6px;
-  font-size:14px;
-  margin-bottom:16px;
-  display:none;
-}
-.alert-error{background:rgba(229,83,83,.12);border:1px solid #e55353;color:#e55353}
-.alert-success{background:rgba(62,207,142,.10);border:1px solid #3ecf8e;color:#3ecf8e}
-.alert-warning{background:rgba(245,166,35,.12);border:1px solid #f5a623;color:#f5a623}
-
-.cards{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-  gap:14px;
-  margin-bottom:24px;
-}
-.card{
-  background:#1a1d27;
-  border:1px solid #2d3148;
-  border-radius:8px;
-  padding:18px 16px;
-  text-align:center;
-}
-.card-icon{font-size:24px;margin-bottom:6px}
-.card-label{font-size:13px;color:#8b8fa3;margin-bottom:4px}
-.card-value{font-size:28px;font-weight:700;margin-bottom:4px}
-.card-desc{font-size:12px;color:#5e6278;line-height:1.4}
-.card--gold .card-value{color:#f5a623}
-.card--ocean .card-value{color:#3ecf8e}
-.card--new .card-value{color:#4f8ef7}
-.card--version .card-value{color:#a78bfa}
-.card{cursor:pointer;transition:transform .15s,box-shadow .15s}
-.card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
-
-.section{margin-bottom:28px}
-.section-title{
-  font-size:16px;
-  font-weight:600;
-  margin-bottom:12px;
-  padding-bottom:8px;
-  border-bottom:1px solid #2d3148;
-}
-.section-meta{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex-wrap:wrap;
-  margin-bottom:12px;
-  font-size:13px;
-  color:#8b8fa3;
-}
-
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{
-  width:100%;
-  border-collapse:collapse;
-  font-size:14px;
-}
-th{
-  text-align:left;
-  padding:10px 12px;
-  background:#161923;
-  color:#8b8fa3;
-  font-weight:600;
-  white-space:nowrap;
-  border-bottom:1px solid #2d3148;
-}
-td{
-  padding:10px 12px;
-  border-bottom:1px solid #1e2236;
-  vertical-align:top;
-}
-tr:hover td{background:rgba(79,142,247,.04)}
-.badge{
-  display:inline-block;
-  padding:2px 8px;
-  border-radius:4px;
-  font-size:12px;
-  font-weight:600;
-}
-.badge-threshold{background:rgba(245,166,35,.15);color:#f5a623}
-.badge-manual{background:rgba(79,142,247,.15);color:#4f8ef7}
-.badge-weekly{background:rgba(62,207,142,.15);color:#3ecf8e}
-.mono{font-family:monospace;font-size:13px;color:#8b8fa3}
-
-.report-box{
-  background:#1a1d27;
-  border:1px solid #2d3148;
-  border-radius:8px;
-  padding:20px 24px;
-  line-height:1.8;
-  font-size:14px;
-}
-.report-box h3{font-size:16px;font-weight:700;color:#e1e4eb;margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid #2d3148}
-.report-box h3:first-child{margin-top:0}
-.report-box strong{color:#f5a623}
-.report-box ul{margin:6px 0 6px 20px}
-.report-box li{margin-bottom:4px}
-.report-box code{background:#161923;padding:2px 6px;border-radius:3px;font-size:13px;color:#4f8ef7}
-.report-box hr{border:none;border-top:1px solid #2d3148;margin:16px 0}
-.report-box p{margin:6px 0}
-
-.btn-view{
-  background:transparent;
-  color:#4f8ef7;
-  border:1px solid #4f8ef7;
-  padding:4px 12px;
-  border-radius:4px;
-  font-size:12px;
-  cursor:pointer;
-  transition:all .15s;
-}
-.btn-view:hover{background:rgba(79,142,247,.1)}
-.btn-view.active{background:#4f8ef7;color:#fff}
-
-.empty{
-  text-align:center;
-  padding:32px 16px;
-  color:#5e6278;
-  font-size:14px;
-}
-
-.loading-overlay{
-  text-align:center;
-  padding:40px 16px;
-  color:#8b8fa3;
-  display:none;
-}
-.spinner{
-  display:inline-block;
-  width:28px;height:28px;
-  border:3px solid #2d3148;
-  border-top-color:#4f8ef7;
-  border-radius:50%;
-  animation:spin .7s linear infinite;
-  margin-bottom:8px;
-}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-@media(max-width:600px){
-  .header{flex-direction:column;align-items:flex-start}
-  .cards{grid-template-columns:repeat(2,1fr)}
-  .card-value{font-size:22px}
-  .report-box{padding:14px 16px}
-}
-
-/* 弹窗 */
-.modal-overlay{
-  position:fixed;top:0;left:0;right:0;bottom:0;
-  background:rgba(0,0,0,.7);z-index:1000;
-  display:none;align-items:center;justify-content:center;
-  padding:20px;
-}
-.modal-overlay.open{display:flex}
-.modal-content{
-  background:#1a1d27;border:1px solid #2d3148;border-radius:12px;
-  width:100%;max-width:600px;max-height:85vh;display:flex;flex-direction:column;
-}
-.modal-content-lg{max-width:800px}
-.modal-header{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:16px 20px;border-bottom:1px solid #2d3148;
-}
-.modal-title{font-size:16px;font-weight:600}
-.modal-close{
-  background:none;border:none;color:#8b8fa3;font-size:24px;
-  cursor:pointer;line-height:1;padding:0;
-}
-.modal-close:hover{color:#e1e4eb}
-.modal-body{
-  flex:1;overflow-y:auto;padding:16px 20px;
-}
-.modal-footer{
-  padding:12px 20px;border-top:1px solid #2d3148;
-}
-.modal-pagination{
-  display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#8b8fa3;
-}
-.modal-pagination button{
-  background:#2d3148;border:none;color:#e1e4eb;padding:4px 10px;
-  border-radius:4px;cursor:pointer;font-size:13px;
-}
-.modal-pagination button:disabled{opacity:.5;cursor:not-allowed}
-.modal-kw-item{
-  display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #1e2236;
-}
-.modal-kw-item .kw-score{font-weight:600;min-width:40px}
-.modal-kw-item .kw-name{flex:1}
-.modal-kw-item .kw-meta{font-size:12px;color:#8b8fa3}
-.clickable{cursor:pointer;color:#4f8ef7}
-.clickable:hover{text-decoration:underline}
+body{background:#0f1117;color:#e1e4eb;font-family:system-ui,-apple-system,sans-serif;padding:20px;overflow-y:auto}
+h1{font-size:20px;margin-bottom:16px}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.toolbar select,.toolbar input{background:#1a1d27;border:1px solid #2d3148;color:#e1e4eb;padding:6px 10px;border-radius:6px;font-size:13px}
+.toolbar input{width:200px}
+.btn{padding:7px 16px;border-radius:6px;border:none;font-size:13px;cursor:pointer;transition:all .15s;font-family:inherit}
+.btn-primary{background:#4f8ef7;color:#fff}
+.btn-primary:hover{opacity:.85}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.btn-secondary{background:#2d3148;color:#e1e4eb}
+.btn-secondary:hover{background:#3d4168}
+.btn-danger{background:#e55353;color:#fff}
+.report-section{margin-bottom:24px}
+.report-card{background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:16px;margin-bottom:12px;cursor:pointer;transition:border-color .15s}
+.report-card:hover{border-color:#4f8ef7}
+.report-card .rc-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.report-card .rc-title{font-size:15px;font-weight:600}
+.report-card .rc-meta{font-size:12px;color:#8b8fa3}
+.report-card .rc-preview{font-size:13px;color:#8b8fa3;max-height:60px;overflow:hidden}
+.report-md{background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:20px;line-height:1.7;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.report-md h1,.report-md h2,.report-md h3{margin-top:16px;margin-bottom:8px}
+.kw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-top:12px}
+.kw-card{background:#1a1d27;border:1px solid #2d3148;border-radius:6px;padding:10px 14px;font-size:13px}
+.kw-card .kw-word{font-weight:600;margin-bottom:4px}
+.kw-card .kw-score{font-weight:700}
+.score-gold{color:#f0c040}.score-blue{color:#4f8ef7}.score-watch{color:#d29922}.score-skip{color:#8b8fa3}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
+.modal-overlay.show{display:flex}
+.modal{background:#1a1d27;border:1px solid #2d3148;border-radius:12px;padding:24px;max-width:900px;width:90%;max-height:80vh;overflow-y:auto}
+.modal h2{font-size:18px;margin-bottom:12px}
+.modal .close-btn{float:right;background:none;border:none;color:#8b8fa3;font-size:20px;cursor:pointer}
+.empty-state{text-align:center;padding:40px;color:#8b8fa3}
+.auth-hint{font-size:12px;color:#8b8fa3;margin-left:8px}
 </style>
 </head>
 <body>
-<div class="container">
+<h1>📊 关键词洞察</h1>
 
-  <div class="header">
-    <div class="header-title">📊 关键词洞察报告</div>
-    <div class="header-right">
-      <span class="header-time" id="lastUpdate"></span>
-      <button class="btn" id="btnRefresh" onclick="loadData()" style="display:none">🔄 刷新</button>
-      <button class="btn btn-scan" id="btnScan" onclick="scanManager.startScan()" style="display:none">📡 全盘扫描</button>
-      <button class="btn btn-generate" id="btnGenerate" onclick="generateReport()" style="display:none">📝 生成报告</button>
-    </div>
-  </div>
-
-  <div class="alert alert-error" id="alertError"></div>
-  <div class="alert alert-success" id="alertSuccess"></div>
-  <div class="alert alert-warning" id="alertWarning"></div>
-
-  <div class="loading-overlay" id="loading">
-    <div class="spinner"></div>
-    <div>正在加载数据…</div>
-  </div>
-
-  <div id="mainContent" style="display:none">
-
-    <div class="cards">
-      <div class="card card--gold" onclick="openKeywordsModal('gold')">
-        <div class="card-icon">💎</div>
-        <div class="card-label">金矿词</div>
-        <div class="card-value" id="vGold">-</div>
-        <div class="card-desc">peak_score ≥ 80</div>
-      </div>
-      <div class="card card--ocean" onclick="openKeywordsModal('ocean')">
-        <div class="card-icon">🟢</div>
-        <div class="card-label">蓝海词</div>
-        <div class="card-value" id="vOcean">-</div>
-        <div class="card-desc">peak_score 60-79</div>
-      </div>
-      <div class="card card--new" onclick="openKeywordsModal('new')">
-        <div class="card-icon">📈</div>
-        <div class="card-label">新增词</div>
-        <div class="card-value" id="vNew">-</div>
-        <div class="card-desc">7天内首次出现的高分词</div>
-      </div>
-      <div class="card card--version">
-        <div class="card-icon">🔄</div>
-        <div class="card-label">报告版本</div>
-        <div class="card-value" id="vVersion">-</div>
-        <div class="card-desc">自迭代 Prompt 版本号</div>
-      </div>
-    </div>
-
-    <div class="section" id="sectionLatest">
-      <div class="section-title">📄 最新评估报告</div>
-      <div class="section-meta" id="latestMeta"></div>
-      <div id="latestReport"></div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">🕐 历史报告记录</div>
-      <div id="historyTable"></div>
-    </div>
-
-    <div class="section" id="sectionDetail" style="display:none">
-      <div class="section-title">📋 历史报告详情</div>
-      <div id="detailReport"></div>
-    </div>
-
-  </div>
+<div class="toolbar">
+  <select id="labelFilter">
+    <option value="">全部标签</option>
+    <option value="💎 金矿">💎 金矿</option>
+    <option value="🟢 蓝海">🟢 蓝海</option>
+    <option value="🟡 观察">🟡 观察</option>
+    <option value="🔴 跳过">🔴 跳过</option>
+  </select>
+  <input id="searchInput" placeholder="搜索关键词…" />
+  <button class="btn btn-primary" id="btnScan" style="display:none">全盘扫描</button>
+  <button class="btn btn-secondary" id="btnGenerate" style="display:none">生成报告</button>
+  <span class="auth-hint" id="authHint"></span>
 </div>
 
-<!-- 弹窗：关键词列表 -->
-<div class="modal-overlay" id="keywordsModal" onclick="closeKeywordsModal(event)">
-  <div class="modal-content modal-content-lg" onclick="event.stopPropagation()">
-    <div class="modal-header">
-      <div class="modal-title" id="keywordsModalTitle">关键词列表</div>
-      <button class="modal-close" onclick="closeKeywordsModal()">&times;</button>
-    </div>
-    <div class="modal-body" id="keywordsModalBody">
-      <div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>
-    </div>
-    <div class="modal-footer">
-      <div class="modal-pagination" id="keywordsPagination"></div>
-    </div>
+<div class="report-section">
+  <h2 style="font-size:16px;margin-bottom:8px">最新报告</h2>
+  <div id="reportArea"><span style="color:#8b8fa3">加载中…</span></div>
+</div>
+
+<div>
+  <h2 style="font-size:16px;margin-bottom:8px">高分关键词</h2>
+  <div id="kwArea"><span style="color:#8b8fa3">加载中…</span></div>
+</div>
+
+<div class="modal-overlay" id="kwModal">
+  <div class="modal">
+    <button class="close-btn" onclick="closeModal()">&times;</button>
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
   </div>
 </div>
 
 <script>
-(function () {
+(function(){
   'use strict';
 
-  const $ = (id) => document.getElementById(id);
+  // 从父窗口读取登录状态
+  let isLoggedIn = false;
+  try {
+    isLoggedIn = !!(window.parent && window.parent.__authUser);
+  } catch(e) {}
 
-  function showError(msg) { const el = $('alertError'); el.textContent = msg; el.style.display = 'block'; }
-  function hideError() { $('alertError').style.display = 'none'; }
-  function showSuccess(msg) { const el = $('alertSuccess'); el.textContent = msg; el.style.display = 'block'; setTimeout(() => { el.style.display = 'none'; }, 5000); }
-  function showWarning(msg) { const el = $('alertWarning'); el.textContent = msg; el.style.display = 'block'; }
-  function hideWarning() { $('alertWarning').style.display = 'none'; }
+  // 登录后才显示操作按钮
+  const btnScan = document.getElementById('btnScan');
+  const btnGenerate = document.getElementById('btnGenerate');
+  const authHint = document.getElementById('authHint');
 
-  function setLoading(on) {
-    $('loading').style.display = on ? 'block' : 'none';
-    const r = $('btnRefresh'); if (r) r.disabled = on;
+  if (isLoggedIn) {
+    btnScan.style.display = 'inline-block';
+    btnGenerate.style.display = 'inline-block';
+  } else {
+    authHint.textContent = '登录后可执行扫描和生成报告';
   }
 
-  function fmtShort(dtStr) {
-    if (!dtStr) return '-';
-    const m = dtStr.match(/\d{4}-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-    if (m) return m[1] + '-' + m[2] + ' ' + m[3] + ':' + m[4];
-    return dtStr;
+  const reportArea = document.getElementById('reportArea');
+  const kwArea = document.getElementById('kwArea');
+  const labelFilter = document.getElementById('labelFilter');
+  const searchInput = document.getElementById('searchInput');
+
+  let allKeywords = [];
+  let latestReport = null;
+
+  function scoreClass(score) {
+    if (score >= 75) return 'score-gold';
+    if (score >= 55) return 'score-blue';
+    if (score >= 35) return 'score-watch';
+    return 'score-skip';
   }
 
-  function escapeHtml(s) {
+  function escHTML(s) {
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
   }
 
-  /* ========== 轻量 Markdown -> HTML ========== */
-  function renderMarkdown(md) {
-    if (!md) return '<div class="empty">暂无报告内容</div>';
-    let html = '';
-    const lines = md.split('\n');
-    let inList = false;
-
-    for (let i = 0; i < lines.length; i++) {
-      let line = lines[i];
-
-      if (line.match(/^---+$/)) {
-        if (inList) { html += '</ul>'; inList = false; }
-        html += '<hr>';
-        continue;
-      }
-
-      if (line.match(/^### /)) {
-        if (inList) { html += '</ul>'; inList = false; }
-        html += '<h3>' + formatInline(line.slice(4)) + '</h3>';
-        continue;
-      }
-
-      if (line.match(/^- /)) {
-        if (!inList) { html += '<ul>'; inList = true; }
-        html += '<li>' + formatInline(line.slice(2)) + '</li>';
-        continue;
-      }
-
-      if (inList) { html += '</ul>'; inList = false; }
-
-      if (line.trim() === '') {
-        continue;
-      }
-
-      html += '<p>' + formatInline(line) + '</p>';
-    }
-    if (inList) html += '</ul>';
-    return html;
-  }
-
-  function formatInline(text) {
-    text = escapeHtml(text);
-    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    text = text.replace(/`(.+?)`/g, '<code>$1</code>');
-    return text;
-  }
-
-  /* ========== 触发原因标签 ========== */
-  function triggerBadge(triggered_by) {
-    if (triggered_by === 'auto_threshold') return '<span class="badge badge-threshold">📊 数据阈值</span>';
-    if (triggered_by === 'manual') return '<span class="badge badge-manual">🖐️ 手动触发</span>';
-    if (triggered_by === 'weekly_full') return '<span class="badge badge-weekly">📅 周全量</span>';
-    return '<span class="badge">' + escapeHtml(triggered_by || '-') + '</span>';
-  }
-
-  /* ========== 数据缓存 ========== */
-  let latestData = null;
-  let expandedId = null;
-
-  /* ========== 扫描管理器 ========== */
-  const scanManager = {
-    currentBatchId: null,
-    pollInterval: null,
-    pollCount: 0,
-    MAX_POLLS: 3600, // 最多轮询 1 小时（每秒一次）
-
-    async startScan() {
-      // 防重：如果已经在扫描中，直接返回
-      if (this.currentBatchId) {
-        showWarning('扫描正在进行中，请稍候...');
+  // 加载最新报告
+  async function loadReport() {
+    try {
+      const resp = await fetch('/report/latest');
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      const data = await resp.json();
+      if (!data.id) {
+        reportArea.innerHTML = '<div class="empty-state">暂无报告</div>';
         return;
       }
-
-      const btn = $('btnScan');
-      btn.disabled = true;
-      btn.classList.add('scanning');
-      btn.textContent = '⏳ 扫描中...';
-      hideError();
-      hideWarning();
-
-      try {
-        // 发起后台扫描任务
-        const resp = await fetch('/scan/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: 'full' })
-        });
-
-        if (resp.status === 401) {
-          window.top.location.href = '/static/index.html';
-          return;
-        }
-
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          showError('启动扫描失败: ' + (err.detail || 'HTTP ' + resp.status));
-          btn.disabled = false;
-          btn.classList.remove('scanning');
-          btn.textContent = '📡 全盘扫描';
-          return;
-        }
-
-        const data = await resp.json();
-        this.currentBatchId = data.batch_id;
-        this.pollCount = 0;
-        showSuccess('✅ 扫描任务已启动，正在后台执行...');
-
-        // 开始轮询状态
-        this.pollStatus();
-
-      } catch (err) {
-        showError('启动扫描失败: ' + err.message);
-        btn.disabled = false;
-        btn.classList.remove('scanning');
-        btn.textContent = '📡 全盘扫描';
-      }
-    },
-
-    pollStatus() {
-      // 防止重复轮询
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-      }
-
-      this.pollInterval = setInterval(async () => {
-        if (!this.currentBatchId) {
-          clearInterval(this.pollInterval);
-          this.pollInterval = null;
-          return;
-        }
-
-        this.pollCount++;
-
-        // 熔断机制：超过最大轮询次数则停止
-        if (this.pollCount > this.MAX_POLLS) {
-          clearInterval(this.pollInterval);
-          this.pollInterval = null;
-          showError('⚠️ 扫描超时（1小时未完成），请稍后查询状态');
-          this.handleScanFailure();
-          return;
-        }
-
-        try {
-          const resp = await fetch(`/scan/status/${this.currentBatchId}`);
-
-          if (resp.status === 401) {
-            window.top.location.href = '/static/index.html';
-            return;
-          }
-
-          if (!resp.ok) {
-            if (resp.status === 404) {
-              showError('任务不存在或已过期');
-              this.handleScanFailure();
-            } else {
-              // 继续轮询，可能是临时网络问题
-            }
-            return;
-          }
-
-          const jobData = await resp.json();
-          const status = jobData.status;
-
-          if (status === 'done') {
-            // 扫描完成
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-            this.handleScanSuccess(jobData);
-
-          } else if (status === 'failed') {
-            // 扫描失败
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-            const error = jobData.error || '未知错误';
-            showError('❌ 扫描失败: ' + error);
-            this.handleScanFailure();
-
-          } else if (status === 'running') {
-            // 继续运行，更新 UI
-            const btn = $('btnScan');
-            const progress = jobData.keywords_found || 0;
-            btn.textContent = `⏳ 扫描中... (${progress} 词)`;
-          }
-
-        } catch (err) {
-          // 网络错误不应中断轮询，继续重试
-          console.warn('轮询状态失败:', err.message);
-        }
-      }, 1000); // 每秒轮询一次
-    },
-
-    handleScanSuccess(jobData) {
-      const btn = $('btnScan');
-      btn.disabled = false;
-      btn.classList.remove('scanning');
-      btn.textContent = '📡 全盘扫描';
-
-      const kwCount = jobData.keywords_found || 0;
-      showSuccess(`✅ 扫描完成！发现 ${kwCount} 个关键词`);
-
-      this.currentBatchId = null;
-      this.pollCount = 0;
-
-      // 自动刷新数据和检查报告生成条件
-      setTimeout(() => {
-        loadData();
-      }, 1000);
-    },
-
-    handleScanFailure() {
-      const btn = $('btnScan');
-      btn.disabled = false;
-      btn.classList.remove('scanning');
-      btn.textContent = '📡 全盘扫描';
-
-      this.currentBatchId = null;
-      this.pollCount = 0;
+      latestReport = data;
+      const md = data.report_md || '';
+      const preview = md.substring(0, 200).replace(/[#*_`]/g, '');
+      reportArea.innerHTML =
+        '<div class="report-card" onclick="showReport()">' +
+        '<div class="rc-header"><span class="rc-title">报告 #' + data.id + '</span>' +
+        '<span class="rc-meta">' + (data.created_at || '') + ' · ' + (data.triggered_by || '') + '</span></div>' +
+        '<div class="rc-preview">' + escHTML(preview) + '</div></div>';
+    } catch(e) {
+      reportArea.innerHTML = '<div class="empty-state">加载报告失败</div>';
     }
+  }
+
+  window.showReport = function() {
+    if (!latestReport) return;
+    const modal = document.getElementById('kwModal');
+    const title = document.getElementById('modalTitle');
+    const body = document.getElementById('modalBody');
+    title.textContent = '报告 #' + latestReport.id;
+    body.innerHTML = '<div class="report-md">' + escHTML(latestReport.report_md || '') + '</div>';
+    modal.classList.add('show');
   };
 
-  /* ========== 渲染 ========== */
-  function renderCards(latest) {
-    if (!latest || !latest.id) {
-      $('vGold').textContent = '-';
-      $('vOcean').textContent = '-';
-      $('vNew').textContent = '-';
-      $('vVersion').textContent = '-';
-      return;
-    }
-    const goldCount = latest.new_gold_count || 0;
-    const kwCount = latest.keyword_count || 0;
-    $('vGold').textContent = goldCount + ' 个';
-    $('vOcean').textContent = (kwCount - goldCount) + ' 个';
-    $('vNew').textContent = goldCount + ' 个';
-    $('vVersion').textContent = '第 ' + (latest.prompt_version || 1) + ' 版';
-  }
-
-  function renderLatestReport(latest) {
-    const meta = $('latestMeta');
-    const box = $('latestReport');
-
-    if (!latest || !latest.id) {
-      meta.innerHTML = '';
-      box.innerHTML = '<div class="empty">暂无报告，请点击「生成报告」创建第一份</div>';
-      return;
-    }
-
-    meta.innerHTML =
-      triggerBadge(latest.triggered_by) + ' ' +
-      '<span class="mono">关键词: ' + (latest.keyword_count || 0) + '</span> ' +
-      '<span class="mono">' + fmtShort(latest.created_at) + ' UTC</span>';
-
-    box.innerHTML = '<div class="report-box">' + renderMarkdown(latest.report_md) + '</div>';
-  }
-
-  function renderHistory(items) {
-    const wrap = $('historyTable');
-    if (!items || items.length === 0) {
-      wrap.innerHTML = '<div class="empty">暂无历史报告</div>';
-      return;
-    }
-    let html = '<div class="table-wrap"><table><thead><tr>' +
-      '<th>ID</th><th>生成时间</th><th>触发原因</th><th>词总数</th><th>金矿词</th><th>操作</th>' +
-      '</tr></thead><tbody>';
-    for (const r of items) {
-      html += '<tr>' +
-        '<td>' + r.id + '</td>' +
-        '<td class="mono">' + fmtShort(r.created_at) + '</td>' +
-        '<td>' + triggerBadge(r.triggered_by) + '</td>' +
-        '<td style="text-align:center">' + (r.keyword_count || 0) + '</td>' +
-        '<td style="text-align:center">' + (r.new_gold_count || 0) + '</td>' +
-        '<td><button class="btn-view' + (expandedId === r.id ? ' active' : '') +
-          '" onclick="viewReport(' + r.id + ')">' +
-          (expandedId === r.id ? '收起' : '查看') + '</button></td>' +
-        '</tr>';
-    }
-    html += '</tbody></table></div>';
-    wrap.innerHTML = html;
-  }
-
-  /* ========== 查看历史报告 ========== */
-  async function viewReport(id) {
-    if (expandedId === id) {
-      expandedId = null;
-      $('sectionDetail').style.display = 'none';
-      $('detailReport').innerHTML = '';
-      renderHistory(window._historyItems);
-      return;
-    }
-
+  // 加载高分关键词
+  async function loadKeywords() {
     try {
-      const resp = await fetch('/report/' + id);
-      if (!resp.ok) {
-        showError('加载报告 #' + id + ' 失败（HTTP ' + resp.status + '）');
-        return;
-      }
+      const resp = await fetch('/analysis/top?limit=100');
+      if (!resp.ok) throw new Error('status ' + resp.status);
       const data = await resp.json();
-
-      expandedId = id;
-      $('sectionDetail').style.display = 'block';
-      $('detailReport').innerHTML =
-        '<div style="margin-bottom:10px;font-size:14px;color:#8b8fa3">' +
-        '报告 #' + data.id + ' — ' + fmtShort(data.created_at) + ' UTC ' +
-        triggerBadge(data.triggered_by) +
-        '</div>' +
-        '<div class="report-box">' + renderMarkdown(data.report_md) + '</div>';
-
-      renderHistory(window._historyItems);
-
-      $('sectionDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } catch (err) {
-      showError('加载报告失败: ' + err.message);
+      allKeywords = data.keywords || [];
+      renderKeywords();
+    } catch(e) {
+      kwArea.innerHTML = '<div class="empty-state">加载关键词失败</div>';
     }
   }
 
-  /* ========== 生成报告 ========== */
-  async function generateReport() {
-    const btn = $('btnGenerate');
-    btn.disabled = true;
-    btn.textContent = '⏳ 生成中...';
-    hideError();
+  function renderKeywords() {
+    const label = labelFilter.value;
+    const search = searchInput.value.trim().toLowerCase();
+    let filtered = allKeywords;
+    if (label) filtered = filtered.filter(k => (k.blue_ocean_label || '').includes(label.replace(/[💎🟢🟡🔴]/g, '').trim()));
+    if (search) filtered = filtered.filter(k => (k.keyword || '').toLowerCase().includes(search));
 
+    if (filtered.length === 0) {
+      kwArea.innerHTML = '<div class="empty-state">无匹配关键词</div>';
+      return;
+    }
+    kwArea.innerHTML = '<div class="kw-grid">' + filtered.map(k => {
+      const score = k.blue_ocean_score || 0;
+      return '<div class="kw-card">' +
+        '<div class="kw-word">' + escHTML(k.keyword) + '</div>' +
+        '<span class="kw-score ' + scoreClass(score) + '">' + score + '</span> ' +
+        '<span style="color:#8b8fa3;font-size:12px">' + escHTML(k.blue_ocean_label || '') + '</span>' +
+        '</div>';
+    }).join('') + '</div>';
+  }
+
+  labelFilter.addEventListener('change', renderKeywords);
+  searchInput.addEventListener('input', renderKeywords);
+
+  // 扫描按钮
+  btnScan.addEventListener('click', async function() {
+    if (!isLoggedIn) return;
+    btnScan.disabled = true;
+    btnScan.textContent = '扫描中…';
+    try {
+      const resp = await fetch('/scan/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode: 'full'})
+      });
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      const data = await resp.json();
+      alert('扫描已启动，batch_id: ' + data.batch_id);
+    } catch(e) {
+      alert('启动扫描失败: ' + e.message);
+    }
+    btnScan.disabled = false;
+    btnScan.textContent = '全盘扫描';
+  });
+
+  // 生成报告按钮
+  btnGenerate.addEventListener('click', async function() {
+    if (!isLoggedIn) return;
+    btnGenerate.disabled = true;
+    btnGenerate.textContent = '生成中…';
     try {
       const resp = await fetch('/report/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: true })
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({force: true})
       });
-
-      if (resp.status === 401) {
-        window.top.location.href = '/static/index.html';
-        return;
-      }
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        showError('生成失败: ' + (err.detail || 'HTTP ' + resp.status));
-        return;
+        throw new Error(err.detail || 'status ' + resp.status);
       }
-
-      showSuccess('报告生成成功，正在刷新...');
-      await loadData();
-    } catch (err) {
-      showError('生成报告失败: ' + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '📝 生成报告';
+      alert('报告生成成功');
+      loadReport();
+    } catch(e) {
+      alert('生成报告失败: ' + e.message);
     }
-  }
+    btnGenerate.disabled = false;
+    btnGenerate.textContent = '生成报告';
+  });
 
-  /* ========== 数据加载 ========== */
-  async function loadData() {
-    hideError(); hideWarning();
-    setLoading(true);
+  window.closeModal = function() {
+    document.getElementById('kwModal').classList.remove('show');
+  };
 
-    try {
-      const [latestResp, historyResp, checkResp] = await Promise.all([
-        fetch('/report/latest'),
-        fetch('/report/history'),
-        fetch('/report/check'),
-      ]);
-
-      if (latestResp.status === 401 || historyResp.status === 401) {
-        window.top.location.href = '/static/index.html';
-        return;
-      }
-
-      const latest = await latestResp.json();
-      const history = await historyResp.json();
-      const check = await checkResp.json();
-
-      latestData = latest;
-      window._historyItems = history.items || [];
-
-      renderCards(latest);
-      renderLatestReport(latest);
-      renderHistory(window._historyItems);
-
-      if (latest && latest.created_at) {
-        $('lastUpdate').textContent = '上次更新: ' + fmtShort(latest.created_at) + ' UTC';
-      }
-
-      $('btnRefresh').style.display = 'inline-block';
-      $('btnGenerate').style.display = 'inline-block';
-      $('btnScan').style.display = 'inline-block';
-      $('mainContent').style.display = 'block';
-
-      if (check && check.should_generate) {
-        showWarning('⚠️ 检测到数据变化达到阈值，建议生成新报告');
-        $('btnGenerate').classList.add('highlight');
-      } else {
-        $('btnGenerate').classList.remove('highlight');
-      }
-
-    } catch (err) {
-      showError('无法连接到服务，请检查服务是否启动');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  /* ========== 弹窗功能 ========== */
-  let currentKwType = 'gold';
-  let currentKwPage = 1;
-
-  function openKeywordsModal(type) {
-    currentKwType = type;
-    currentKwPage = 1;
-    const titles = { gold: '💎 金矿词', ocean: '🟢 蓝海词', new: '📈 新增词' };
-    $('keywordsModalTitle').textContent = titles[type] || '关键词列表';
-    $('keywordsModal').classList.add('open');
-    loadKeywordsPage(1);
-  }
-
-  function closeKeywordsModal(e) {
-    if (e && e.target !== e.currentTarget) return;
-    $('keywordsModal').classList.remove('open');
-  }
-
-  async function loadKeywordsPage(page) {
-    currentKwPage = page;
-    const body = $('keywordsModalBody');
-    body.innerHTML = '<div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>';
-
-    try {
-      // 映射类型到 label
-      const labelMap = { gold: '💎 金矿', ocean: '🟢 蓝海', new: null };
-      const label = labelMap[currentKwType] || '';
-
-      const url = '/analysis/top?label=' + encodeURIComponent(label) + '&limit=100&days=30';
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const data = await resp.json();
-
-      const keywords = data.keywords || [];
-
-      // 对于 new 类型，需要过滤 7 天内新出现的
-      let filtered = keywords;
-      if (currentKwType === 'new') {
-        // 这里简化处理：直接显示所有，由后端或前端进一步筛选
-        // 实际上 /analysis/top 不支持 new 筛选，我们显示全部
-      }
-
-      renderKeywordsList(filtered);
-
-    } catch (err) {
-      body.innerHTML = '<div class="empty">加载失败: ' + err.message + '</div>';
-    }
-  }
-
-  function renderKeywordsList(list) {
-    const body = $('keywordsModalBody');
-    if (!list || list.length === 0) {
-      body.innerHTML = '<div class="empty">暂无关键词</div>';
-      return;
-    }
-    let html = '';
-    for (const kw of list) {
-      const score = kw.blue_ocean_score || 0;
-      const scoreColor = score >= 80 ? '#f5a623' : (score >= 60 ? '#3ecf8e' : '#8b8fa3');
-      html += '<div class="modal-kw-item">' +
-        '<div class="kw-score" style="color:' + scoreColor + '">' + score + '</div>' +
-        '<div class="kw-name"><span class="clickable">' + escapeHtml(kw.keyword) + '</span></div>' +
-        '<div class="kw-meta">' + (kw.country || '-') + ' | ' + (kw.top_reviews || 0) + ' 评论</div></div>';
-    }
-    body.innerHTML = html;
-  }
-
-  window.loadData = loadData;
-  window.generateReport = generateReport;
-  window.viewReport = viewReport;
-  window.openKeywordsModal = openKeywordsModal;
-  window.closeKeywordsModal = closeKeywordsModal;
-  window.scanManager = scanManager;
-
-  fetch('/auth/me').then(r => {
-    if (!r.ok) { window.top.location.href = '/static/index.html'; return; }
-    loadData();
-  }).catch(() => { window.top.location.href = '/static/index.html'; });
-
+  loadReport();
+  loadKeywords();
 })();
 </script>
 </body>

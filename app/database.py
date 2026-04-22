@@ -109,13 +109,14 @@ def bootstrap_default_seeds_if_empty() -> None:
 _ALLOWED_TABLES = frozenset({
     "aso_keywords", "aso_scan_jobs", "aso_seeds",
     "aso_seed_evolution_log", "aso_analysis_reports", "aso_users",
-    "aso_agents", "aso_agent_assignments",
+    "aso_agents", "aso_agent_assignments", "aso_score_priors",
 })
 
 _ALLOWED_COLUMNS = frozenset({
     "gplay_autocomplete_rank", "gplay_top_reviews", "gplay_top_installs",
     "gplay_top_installs_num", "gplay_avg_rating", "cross_platform",
     "trends_rising", "trends_rising_count", "reddit_post_count", "reddit_avg_score",
+    "score_ci_lower", "score_ci_upper",
 })
 
 
@@ -333,6 +334,7 @@ def init_db() -> None:
             cur.execute(sql_users)
             cur.execute(sql_agents)
             cur.execute(sql_assignments)
+            cur.execute(sql_score_priors)
         conn.commit()
 
         _new_columns = [
@@ -346,6 +348,8 @@ def init_db() -> None:
             ("trends_rising_count", "INT DEFAULT 0"),
             ("reddit_post_count", "INT DEFAULT 0"),
             ("reddit_avg_score", "FLOAT DEFAULT 0"),
+            ("score_ci_lower", "INT DEFAULT NULL"),
+            ("score_ci_upper", "INT DEFAULT NULL"),
         ]
         for col_name, col_def in _new_columns:
             _add_column_if_not_exists(conn, "aso_keywords", col_name, col_def)
@@ -434,10 +438,11 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
       blue_ocean_label, scanned_at, scan_batch_id,
       gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
       gplay_top_installs_num, gplay_avg_rating, cross_platform,
-      trends_rising, trends_rising_count, reddit_post_count, reddit_avg_score
+      trends_rising, trends_rising_count, reddit_post_count, reddit_avg_score,
+      score_ci_lower, score_ci_upper
     ) VALUES (
       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
     )
     """
     tuples: list[tuple] = []
@@ -474,6 +479,8 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
                 int(r.get("trends_rising_count") or 0),
                 int(r.get("reddit_post_count") or 0),
                 float(r.get("reddit_avg_score") or 0),
+                r.get("score_ci_lower"),
+                r.get("score_ci_upper"),
             )
         )
 
@@ -1763,6 +1770,87 @@ def get_all_assignments() -> list[dict]:
             return [dict(r) for r in cur.fetchall()]
     except Exception as exc:
         logger.error("get_all_assignments 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# ===================== 贝叶斯先验 CRUD =====================
+
+
+def get_all_priors() -> list[dict]:
+    """读取所有维度的先验/后验状态。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM aso_score_priors ORDER BY dimension")
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_all_priors 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def upsert_prior(
+    dimension: str,
+    alpha: float,
+    beta_param: float,
+    mu: float,
+    sigma_sq: float,
+    n_obs: int,
+) -> None:
+    """插入或更新单维度先验。"""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_score_priors
+                  (dimension, alpha, beta_param, mu, sigma_sq, n_obs, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                  alpha = VALUES(alpha), beta_param = VALUES(beta_param),
+                  mu = VALUES(mu), sigma_sq = VALUES(sigma_sq),
+                  n_obs = VALUES(n_obs), updated_at = VALUES(updated_at)
+                """,
+                (dimension, alpha, beta_param, mu, sigma_sq, n_obs, now),
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.error("upsert_prior 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_batch_label_stats(batch_id: str) -> list[dict]:
+    """获取指定批次中各关键词的标签和各维度原始值，用于后验更新。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT blue_ocean_label, blue_ocean_score,
+                       top_reviews, seed_coverage, concentration,
+                       avg_update_age_months, trend_gap, rank_change,
+                       cross_platform, trends_rising, reddit_post_count,
+                       gplay_top_installs_num
+                FROM aso_keywords
+                WHERE scan_batch_id = %s
+                """,
+                (batch_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_batch_label_stats 失败: %s", exc)
         raise
     finally:
         if conn is not None:

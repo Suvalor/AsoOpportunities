@@ -313,9 +313,15 @@ def validate_pending_seeds(max_validate: int = 5) -> None:
 
 def run_evolution_after_full_scan(batch_id: str) -> None:
     """
-    全量扫描写库后的进化流水线顺序：评估 → 剪枝 → 生成 → 校验。
+    全量扫描写库后的进化流水线顺序：后验更新 → 评估 → 剪枝 → 生成 → 校验。
     单步失败仅记日志，不中断后续步骤。
     """
+    try:
+        from .bayesian_updater import update_posteriors
+        update_posteriors(batch_id)
+    except Exception as exc:
+        logger.exception("update_posteriors 失败: %s", exc)
+
     try:
         evaluate_seed_performance(batch_id)
     except Exception as exc:

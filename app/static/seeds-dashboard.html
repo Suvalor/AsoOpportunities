@@ -3,664 +3,194 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ASO 种子进化状态</title>
-<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<title>种子进化</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{
-  background:#0f1117;
-  color:#e1e4eb;
-  font-family:system-ui,-apple-system,sans-serif;
-  line-height:1.6;
-  min-height:100vh;
-  padding:0 16px 40px;
-}
-a{color:#4f8ef7;text-decoration:none}
-
-.container{max-width:960px;margin:0 auto}
-
-/* 顶部栏 */
-.header{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  flex-wrap:wrap;
-  gap:12px;
-  padding:20px 0 16px;
-  border-bottom:1px solid #2d3148;
-  margin-bottom:20px;
-}
-.header-title{font-size:20px;font-weight:700;white-space:nowrap}
-.header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.header-time{font-size:13px;color:#8b8fa3;font-family:monospace}
-.btn{
-  background:#4f8ef7;
-  color:#fff;
-  border:none;
-  padding:7px 16px;
-  border-radius:6px;
-  font-size:14px;
-  cursor:pointer;
-  white-space:nowrap;
-  transition:opacity .15s;
-}
-.btn:hover{opacity:.85}
-.btn:disabled{opacity:.45;cursor:not-allowed}
-
-/* 错误/提示 */
-.alert{
-  padding:10px 16px;
-  border-radius:6px;
-  font-size:14px;
-  margin-bottom:16px;
-  display:none;
-}
-.alert-error{background:rgba(229,83,83,.12);border:1px solid #e55353;color:#e55353}
-.alert-success{background:rgba(62,207,142,.10);border:1px solid #3ecf8e;color:#3ecf8e}
-
-/* 概览卡片 */
-.cards{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-  gap:14px;
-  margin-bottom:24px;
-}
-.card{
-  background:#1a1d27;
-  border:1px solid #2d3148;
-  border-radius:8px;
-  padding:18px 16px;
-  text-align:center;
-}
-.card-icon{font-size:24px;margin-bottom:6px}
-.card-label{font-size:13px;color:#8b8fa3;margin-bottom:4px}
-.card-value{font-size:28px;font-weight:700;margin-bottom:4px}
-.card-desc{font-size:12px;color:#5e6278;line-height:1.4}
-.card--active .card-value{color:#3ecf8e}
-.card--pending .card-value{color:#f5a623}
-.card--pruned .card-value{color:#e55353}
-.card--gen .card-value{color:#4f8ef7}
-.card{cursor:pointer;transition:transform .15s,box-shadow .15s}
-.card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
-
-/* 区块标题 */
-.section{margin-bottom:28px}
-.section-title{
-  font-size:16px;
-  font-weight:600;
-  margin-bottom:12px;
-  padding-bottom:8px;
-  border-bottom:1px solid #2d3148;
-}
-
-/* 表格 */
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{
-  width:100%;
-  border-collapse:collapse;
-  font-size:14px;
-}
-th{
-  text-align:left;
-  padding:10px 12px;
-  background:#161923;
-  color:#8b8fa3;
-  font-weight:600;
-  white-space:nowrap;
-  border-bottom:1px solid #2d3148;
-}
-td{
-  padding:10px 12px;
-  border-bottom:1px solid #1e2236;
-  vertical-align:top;
-}
-tr:hover td{background:rgba(79,142,247,.04)}
-.badge{
-  display:inline-block;
-  padding:2px 8px;
-  border-radius:4px;
-  font-size:12px;
-  font-weight:600;
-}
-.badge-ai{background:rgba(79,142,247,.15);color:#4f8ef7}
-.badge-manual{background:rgba(245,166,35,.15);color:#f5a623}
-.mono{font-family:monospace;font-size:13px;color:#8b8fa3}
-
-/* 时间线 */
-.timeline{display:flex;flex-direction:column;gap:0}
-.tl-item{
-  display:flex;
-  align-items:flex-start;
-  gap:12px;
-  padding:10px 12px;
-  border-bottom:1px solid #1e2236;
-  font-size:14px;
-}
-.tl-item:hover{background:rgba(79,142,247,.04)}
-.tl-time{
-  flex-shrink:0;
-  width:90px;
-  font-family:monospace;
-  font-size:13px;
-  color:#8b8fa3;
-  padding-top:1px;
-}
-.tl-icon{flex-shrink:0;font-size:18px;width:24px;text-align:center}
-.tl-body{flex:1;min-width:0}
-.tl-type{font-weight:600;margin-right:8px}
-.tl-detail{color:#8b8fa3;word-break:break-word}
-
-/* 空状态 */
-.empty{
-  text-align:center;
-  padding:32px 16px;
-  color:#5e6278;
-  font-size:14px;
-}
-
-/* 加载态 */
-.loading-overlay{
-  text-align:center;
-  padding:40px 16px;
-  color:#8b8fa3;
-  display:none;
-}
-.spinner{
-  display:inline-block;
-  width:28px;height:28px;
-  border:3px solid #2d3148;
-  border-top-color:#4f8ef7;
-  border-radius:50%;
-  animation:spin .7s linear infinite;
-  margin-bottom:8px;
-}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* 移动端 */
-@media(max-width:600px){
-  .header{flex-direction:column;align-items:flex-start}
-  .cards{grid-template-columns:repeat(2,1fr)}
-  .card-value{font-size:22px}
-  .tl-item{flex-wrap:wrap;gap:6px}
-  .tl-time{width:auto}
-}
-
-/* 弹窗 */
-.modal-overlay{
-  position:fixed;top:0;left:0;right:0;bottom:0;
-  background:rgba(0,0,0,.7);z-index:1000;
-  display:none;align-items:center;justify-content:center;
-  padding:20px;
-}
-.modal-overlay.open{display:flex}
-.modal-content{
-  background:#1a1d27;border:1px solid #2d3148;border-radius:12px;
-  width:100%;max-width:600px;max-height:85vh;display:flex;flex-direction:column;
-}
-.modal-content-lg{max-width:800px}
-.modal-header{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:16px 20px;border-bottom:1px solid #2d3148;
-}
-.modal-title{font-size:16px;font-weight:600}
-.modal-close{
-  background:none;border:none;color:#8b8fa3;font-size:24px;
-  cursor:pointer;line-height:1;padding:0;
-}
-.modal-close:hover{color:#e1e4eb}
-.modal-body{
-  flex:1;overflow-y:auto;padding:16px 20px;
-}
-.modal-footer{
-  padding:12px 20px;border-top:1px solid #2d3148;
-}
-.modal-pagination{
-  display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#8b8fa3;
-}
-.modal-pagination button{
-  background:#2d3148;border:none;color:#e1e4eb;padding:4px 10px;
-  border-radius:4px;cursor:pointer;font-size:13px;
-}
-.modal-pagination button:disabled{opacity:.5;cursor:not-allowed}
-.modal-seed-item{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:10px 12px;border-bottom:1px solid #1e2236;cursor:pointer;
-}
-.modal-seed-item:hover{background:rgba(79,142,247,.08)}
-.modal-seed-item .seed-name{font-weight:500}
-.modal-seed-item .seed-meta{font-size:12px;color:#8b8fa3}
-.modal-kw-item{
-  display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #1e2236;
-}
-.modal-kw-item .kw-score{font-weight:600;min-width:40px}
-.modal-kw-item .kw-name{flex:1}
-.modal-kw-item .kw-meta{font-size:12px;color:#8b8fa3}
-.clickable{cursor:pointer;color:#4f8ef7}
-.clickable:hover{text-decoration:underline}
+body{background:#0f1117;color:#e1e4eb;font-family:system-ui,-apple-system,sans-serif;padding:20px;overflow-y:auto}
+h1{font-size:20px;margin-bottom:16px}
+.stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.stat-card{background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:14px 18px;min-width:120px}
+.stat-card .label{font-size:12px;color:#8b8fa3;margin-bottom:4px}
+.stat-card .value{font-size:22px;font-weight:700}
+.seed-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:20px}
+.seed-card{background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:14px;cursor:pointer;transition:border-color .15s}
+.seed-card:hover{border-color:#4f8ef7}
+.seed-card .seed-text{font-size:14px;font-weight:600;margin-bottom:6px;word-break:break-all}
+.seed-card .seed-meta{font-size:12px;color:#8b8fa3}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px}
+.badge-active{background:rgba(63,185,80,.15);color:#3fb950}
+.badge-pending{background:rgba(210,153,34,.15);color:#d29922}
+.badge-pruned{background:rgba(229,83,83,.15);color:#e55353}
+.evo-log{background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:16px;max-height:300px;overflow-y:auto;font-size:13px;line-height:1.6}
+.evo-log pre{white-space:pre-wrap;word-break:break-all}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
+.modal-overlay.show{display:flex}
+.modal{background:#1a1d27;border:1px solid #2d3148;border-radius:12px;padding:24px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto}
+.modal h2{font-size:18px;margin-bottom:12px}
+.modal .close-btn{float:right;background:none;border:none;color:#8b8fa3;font-size:20px;cursor:pointer}
+.kw-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
+.kw-table th,.kw-table td{padding:8px 10px;text-align:left;border-bottom:1px solid #2d3148}
+.kw-table th{color:#8b8fa3;font-weight:600}
+.score-gold{color:#f0c040;font-weight:700}
+.score-blue{color:#4f8ef7;font-weight:700}
+.score-watch{color:#d29922}
+.score-skip{color:#8b8fa3}
+.empty-state{text-align:center;padding:40px;color:#8b8fa3}
 </style>
 </head>
 <body>
-<div class="container">
-
-  <!-- 顶部栏 -->
-  <div class="header">
-    <div class="header-title">🌱 ASO 种子进化状态</div>
-    <div class="header-right">
-      <span class="header-time" id="lastUpdate"></span>
-      <button class="btn" id="btnRefresh" onclick="loadData()" style="display:none">🔄 刷新</button>
-    </div>
-  </div>
-
-  <!-- 提示 -->
-  <div class="alert alert-error" id="alertError"></div>
-
-  <!-- 加载中 -->
-  <div class="loading-overlay" id="loading">
-    <div class="spinner"></div>
-    <div>正在加载数据…</div>
-  </div>
-
-  <!-- 主体内容（初始隐藏） -->
-  <div id="mainContent" style="display:none">
-
-    <!-- 概览卡片 -->
-    <div class="cards">
-      <div class="card card--active" onclick="openSeedsModal('active')">
-        <div class="card-icon">🟢</div>
-        <div class="card-label">Active 种子</div>
-        <div class="card-value" id="vActive">-</div>
-        <div class="card-desc">参与当前扫描的种子</div>
-      </div>
-      <div class="card card--pending" onclick="openSeedsModal('pending')">
-        <div class="card-icon">⏳</div>
-        <div class="card-label">Pending 种子</div>
-        <div class="card-value" id="vPending">-</div>
-        <div class="card-desc">待验证激活，下次全量扫描时处理</div>
-      </div>
-      <div class="card card--pruned" onclick="openSeedsModal('pruned')">
-        <div class="card-icon">🗑️</div>
-        <div class="card-label">已淘汰种子</div>
-        <div class="card-value" id="vPruned">-</div>
-        <div class="card-desc">长期低效已停用</div>
-      </div>
-      <div class="card card--gen" onclick="openSeedsModal(null)">
-        <div class="card-icon">🧬</div>
-        <div class="card-label">当前最大代数</div>
-        <div class="card-value" id="vGen">-</div>
-        <div class="card-desc">第 0 代为人工初始，每轮 Claude 推断 +1</div>
-      </div>
-    </div>
-
-    <!-- Pending 种子表格 -->
-    <div class="section">
-      <div class="section-title">⏳ 待激活种子（最早创建的30条）</div>
-      <div id="pendingTable"></div>
-    </div>
-
-    <!-- 进化事件时间线 -->
-    <div class="section">
-      <div class="section-title">🧬 最近进化事件（最新25条）</div>
-      <div id="timeline"></div>
-    </div>
-
-  </div>
+<h1>🌱 种子进化矩阵</h1>
+<div class="stats" id="statsRow"></div>
+<div class="seed-grid" id="seedGrid"></div>
+<div id="evoSection">
+  <h2 style="font-size:16px;margin-bottom:8px">进化日志</h2>
+  <div class="evo-log" id="evoLog"><span style="color:#8b8fa3">加载中…</span></div>
 </div>
 
-<!-- 弹窗：种子列表 -->
-<div class="modal-overlay" id="seedsModal" onclick="closeSeedsModal(event)">
-  <div class="modal-content" onclick="event.stopPropagation()">
-    <div class="modal-header">
-      <div class="modal-title" id="seedsModalTitle">种子列表</div>
-      <button class="modal-close" onclick="closeSeedsModal()">&times;</button>
-    </div>
-    <div class="modal-body" id="seedsModalBody">
-      <div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>
-    </div>
-    <div class="modal-footer">
-      <div class="modal-pagination" id="seedsPagination"></div>
-    </div>
-  </div>
-</div>
-
-<!-- 弹窗：种子关联关键词 -->
-<div class="modal-overlay" id="keywordsModal" onclick="closeKeywordsModal(event)">
-  <div class="modal-content modal-content-lg" onclick="event.stopPropagation()">
-    <div class="modal-header">
-      <div class="modal-title" id="keywordsModalTitle">关键词列表</div>
-      <button class="modal-close" onclick="closeKeywordsModal()">&times;</button>
-    </div>
-    <div class="modal-body" id="keywordsModalBody">
-      <div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>
-    </div>
+<div class="modal-overlay" id="kwModal">
+  <div class="modal">
+    <button class="close-btn" onclick="closeModal()">&times;</button>
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
   </div>
 </div>
 
 <script>
-(function () {
+(function(){
   'use strict';
 
-  const $ = (id) => document.getElementById(id);
+  // 从父窗口读取登录状态
+  let isLoggedIn = false;
+  try {
+    isLoggedIn = !!(window.parent && window.parent.__authUser);
+  } catch(e) {}
 
-  /* ========== UI 辅助 ========== */
-  function showError(msg) {
-    const el = $('alertError');
-    el.textContent = msg;
-    el.style.display = 'block';
-  }
-  function hideError() {
-    $('alertError').style.display = 'none';
-  }
-  function setLoading(on) {
-    $('loading').style.display = on ? 'block' : 'none';
-    $('btnRefresh').disabled = on;
-  }
+  const statsRow = document.getElementById('statsRow');
+  const seedGrid = document.getElementById('seedGrid');
+  const evoLog = document.getElementById('evoLog');
 
-  /* ========== 时间格式化 ========== */
-  function fmtShort(dtStr) {
-    if (!dtStr) return '-';
-    const m = dtStr.match(/(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-    if (m) return m[1] + '-' + m[2] + ' ' + m[3] + ':' + m[4];
-    const m2 = dtStr.match(/\d{4}-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-    if (m2) return m2[1] + '-' + m2[2] + ' ' + m2[3] + ':' + m2[4];
-    return dtStr;
+  function badgeHTML(status) {
+    const cls = {active:'badge-active',pending:'badge-pending',pruned:'badge-pruned'}[status] || 'badge-active';
+    return '<span class="badge ' + cls + '">' + status + '</span>';
   }
 
-  /* ========== Payload 安全解析 ========== */
-  function safePayload(pl) {
-    if (pl == null) return null;
-    if (typeof pl === 'string') {
-      try { return JSON.parse(pl); } catch (_) { return pl; }
+  function scoreClass(score) {
+    if (score >= 75) return 'score-gold';
+    if (score >= 55) return 'score-blue';
+    if (score >= 35) return 'score-watch';
+    return 'score-skip';
+  }
+
+  async function loadStatus() {
+    try {
+      const resp = await fetch('/seeds/status');
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      const data = await resp.json();
+
+      const counts = data.seed_counts || {};
+      const items = [
+        {label:'Active', value: counts.active || 0},
+        {label:'Pending', value: counts.pending || 0},
+        {label:'Pruned', value: counts.pruned || 0},
+        {label:'总种子数', value: counts.total || 0},
+        {label:'当前世代', value: data.current_generation || '-'},
+      ];
+      statsRow.innerHTML = items.map(i =>
+        '<div class="stat-card"><div class="label">' + i.label + '</div><div class="value">' + i.value + '</div></div>'
+      ).join('');
+
+      // 进化日志
+      const logs = data.evolution_logs || [];
+      if (logs.length === 0) {
+        evoLog.innerHTML = '<span style="color:#8b8fa3">暂无进化记录</span>';
+      } else {
+        evoLog.innerHTML = logs.map(l => {
+          const ts = l.created_at || '';
+          const action = l.action || '';
+          let detail = '';
+          try { detail = JSON.stringify(JSON.parse(l.payload || '{}'), null, 2); } catch(e) { detail = l.payload || ''; }
+          return '<div><b>' + ts + '</b> ' + action + '<pre>' + detail + '</pre></div>';
+        }).join('<hr style="border-color:#2d3148;margin:8px 0">');
+      }
+    } catch(e) {
+      statsRow.innerHTML = '<div class="stat-card"><div class="value" style="color:#e55353">加载失败</div></div>';
     }
-    return pl;
   }
 
-  function truncate(s, max) {
-    if (!s) return '';
-    s = String(s);
-    return s.length > max ? s.slice(0, max) + '…' : s;
-  }
+  async function loadSeeds() {
+    try {
+      const resp = await fetch('/seeds/list?limit=200');
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      const data = await resp.json();
+      const items = data.items || [];
+      if (items.length === 0) {
+        seedGrid.innerHTML = '<div class="empty-state">暂无种子数据</div>';
+        return;
+      }
+      seedGrid.innerHTML = items.map(s =>
+        '<div class="seed-card" data-seed="' + encodeURIComponent(s.seed) + '">' +
+        '<div class="seed-text">' + escHTML(s.seed) + badgeHTML(s.status) + '</div>' +
+        '<div class="seed-meta">世代 ' + (s.generation || '-') + ' · 来源 ' + (s.source || '-') + '</div>' +
+        '</div>'
+      ).join('');
 
-  /* ========== 事件类型映射 ========== */
-  const EVENT_MAP = {
-    generate_new_seeds: {
-      icon: '🌱', label: 'AI 推断新种子',
-      detail(p) {
-        if (p && Array.isArray(p.seeds)) return '新增 ' + p.seeds.length + ' 个待验证种子';
-        return '';
-      }
-    },
-    generate_new_seeds_skipped: {
-      icon: '⏭️', label: '跳过推断',
-      detail(p) { return p && p.reason ? truncate(p.reason, 80) : ''; }
-    },
-    generate_new_seeds_failed: {
-      icon: '❌', label: '推断失败',
-      detail(p) { return p && p.error ? truncate(p.error, 80) : ''; }
-    },
-    generate_new_seeds_empty: {
-      icon: '⚠️', label: '推断结果为空',
-      detail() { return '本轮未产出新种子'; }
-    },
-    validate_pending_seeds: {
-      icon: '✅', label: '验证 Pending 种子',
-      detail(p) {
-        if (!p) return '';
-        const a = typeof p.activated === 'number' ? p.activated : (Array.isArray(p.activated) ? p.activated.length : 0);
-        const r = typeof p.rejected === 'number' ? p.rejected : (Array.isArray(p.rejected) ? p.rejected.length : 0);
-        return '激活 ' + a + ' 个，拒绝 ' + r + ' 个';
-      }
-    },
-    prune_weak_seeds: {
-      icon: '🗑️', label: '淘汰低效种子',
-      detail(p) {
-        if (p && Array.isArray(p.pruned)) return '淘汰 ' + p.pruned.length + ' 个种子';
-        return '';
-      }
-    },
-    prune_skipped: {
-      icon: '⏭️', label: '跳过淘汰',
-      detail(p) { return p && p.reason ? truncate(p.reason, 80) : ''; }
-    },
-    evaluate_seed_performance: {
-      icon: '📊', label: '更新种子表现',
-      detail(p) {
-        if (p && Array.isArray(p.per_seed)) return '评估 ' + p.per_seed.length + ' 个种子';
-        if (p && typeof p.per_seed === 'number') return '评估 ' + p.per_seed + ' 个种子';
-        return '';
-      }
+      seedGrid.querySelectorAll('.seed-card').forEach(card => {
+        card.addEventListener('click', () => showSeedKeywords(decodeURIComponent(card.dataset.seed)));
+      });
+    } catch(e) {
+      seedGrid.innerHTML = '<div class="empty-state">加载种子列表失败</div>';
     }
+  }
+
+  async function showSeedKeywords(seed) {
+    const modal = document.getElementById('kwModal');
+    const title = document.getElementById('modalTitle');
+    const body = document.getElementById('modalBody');
+    title.textContent = '种子：' + seed;
+    body.innerHTML = '<div style="color:#8b8fa3">加载中…</div>';
+    modal.classList.add('show');
+
+    try {
+      const resp = await fetch('/seeds/' + encodeURIComponent(seed) + '/keywords?limit=100');
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      const data = await resp.json();
+      const kws = data.keywords || [];
+      if (kws.length === 0) {
+        body.innerHTML = '<div style="color:#8b8fa3">该种子暂无关联关键词</div>';
+        return;
+      }
+      let html = '<table class="kw-table"><thead><tr>' +
+        '<th>关键词</th><th>蓝海分</th><th>标签</th><th>国家</th><th>扫描时间</th>' +
+        '</tr></thead><tbody>';
+      kws.forEach(k => {
+        const score = k.blue_ocean_score || 0;
+        html += '<tr>' +
+          '<td>' + escHTML(k.keyword || '') + '</td>' +
+          '<td class="' + scoreClass(score) + '">' + score + '</td>' +
+          '<td>' + escHTML(k.blue_ocean_label || '') + '</td>' +
+          '<td>' + escHTML(k.country || '') + '</td>' +
+          '<td>' + escHTML(k.scanned_at || '') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+      body.innerHTML = html;
+    } catch(e) {
+      body.innerHTML = '<div style="color:#e55353">加载关键词失败</div>';
+    }
+  }
+
+  window.closeModal = function() {
+    document.getElementById('kwModal').classList.remove('show');
   };
 
-  function eventInfo(type, rawPayload) {
-    const p = safePayload(rawPayload);
-    const mapped = EVENT_MAP[type];
-    if (mapped) {
-      return { icon: mapped.icon, label: mapped.label, detail: mapped.detail(p) };
-    }
-    let detail = '';
-    try {
-      detail = truncate(typeof p === 'string' ? p : JSON.stringify(p), 80);
-    } catch (_) { /* 降级 */ }
-    return { icon: '🔹', label: type, detail: detail };
-  }
-
-  /* ========== 渲染 ========== */
-  function escapeHtml(s) {
+  function escHTML(s) {
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
   }
 
-  function renderCards(data) {
-    $('vActive').textContent = data.active_count + ' 个';
-    $('vPending').textContent = data.pending_count + ' 个';
-    $('vPruned').textContent = data.pruned_count + ' 个';
-    $('vGen').textContent = '第 ' + data.max_generation + ' 代';
-  }
-
-  function renderPendingTable(list) {
-    const wrap = $('pendingTable');
-    if (!list || list.length === 0) {
-      wrap.innerHTML = '<div class="empty">暂无待激活种子</div>';
-      return;
-    }
-    let html = '<div class="table-wrap"><table><thead><tr>' +
-      '<th>种子词</th><th>来源</th><th>代数</th><th>创建时间（UTC）</th>' +
-      '</tr></thead><tbody>';
-    for (const s of list) {
-      const srcBadge = s.source === 'generated'
-        ? '<span class="badge badge-ai">🤖 AI生成</span>'
-        : '<span class="badge badge-manual">✍️ 手动</span>';
-      html += '<tr>' +
-        '<td>' + escapeHtml(s.seed) + '</td>' +
-        '<td>' + srcBadge + '</td>' +
-        '<td style="text-align:center">' + (s.generation ?? '-') + '</td>' +
-        '<td class="mono">' + fmtShort(s.created_at) + '</td>' +
-        '</tr>';
-    }
-    html += '</tbody></table></div>';
-    wrap.innerHTML = html;
-  }
-
-  function renderTimeline(events) {
-    const wrap = $('timeline');
-    if (!events || events.length === 0) {
-      wrap.innerHTML = '<div class="empty">暂无进化事件</div>';
-      return;
-    }
-    let html = '<div class="timeline">';
-    for (const e of events) {
-      const info = eventInfo(e.event_type, e.payload);
-      html += '<div class="tl-item">' +
-        '<div class="tl-time">' + fmtShort(e.created_at) + '</div>' +
-        '<div class="tl-icon">' + info.icon + '</div>' +
-        '<div class="tl-body">' +
-          '<span class="tl-type">' + escapeHtml(info.label) + '</span>' +
-          (info.detail ? '<span class="tl-detail">' + escapeHtml(info.detail) + '</span>' : '') +
-        '</div>' +
-        '</div>';
-    }
-    html += '</div>';
-    wrap.innerHTML = html;
-  }
-
-  /* ========== 数据加载 ========== */
-  async function loadData() {
-    hideError();
-    setLoading(true);
-
-    try {
-      const resp = await fetch('/seeds/status');
-
-      if (resp.status === 401) {
-        window.top.location.href = '/static/index.html';
-        return;
-      }
-      if (!resp.ok) {
-        showError('请求失败（HTTP ' + resp.status + '）');
-        setLoading(false);
-        return;
-      }
-
-      const data = await resp.json();
-
-      renderCards(data);
-      renderPendingTable(data.pending_preview);
-      renderTimeline(data.recent_evolution_events);
-
-      $('lastUpdate').textContent = '上次更新：' + (data.generated_at || '-') + '（UTC）';
-      $('btnRefresh').style.display = 'inline-block';
-      $('mainContent').style.display = 'block';
-
-    } catch (err) {
-      showError('无法连接到服务，请检查服务是否启动');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  /* ========== 弹窗功能 ========== */
-  let currentSeedsPage = 1;
-  let currentSeedsStatus = 'active';
-  let seedsCache = {};
-
-  function openSeedsModal(status) {
-    currentSeedsStatus = status;
-    currentSeedsPage = 1;
-    const titles = { active: '🟢 Active 种子', pending: '⏳ Pending 种子', pruned: '🗑️ 已淘汰种子' };
-    $('seedsModalTitle').textContent = titles[status] || '🌱 全部种子';
-    $('seedsModal').classList.add('open');
-    loadSeedsPage(1);
-  }
-
-  function closeSeedsModal(e) {
-    if (e && e.target !== e.currentTarget) return;
-    $('seedsModal').classList.remove('open');
-  }
-
-  async function loadSeedsPage(page) {
-    currentSeedsPage = page;
-    const body = $('seedsModalBody');
-    body.innerHTML = '<div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>';
-
-    try {
-      const url = '/seeds/list?status=' + encodeURIComponent(currentSeedsStatus) + '&page=' + page + '&limit=20';
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const data = await resp.json();
-
-      seedsCache = data;
-      renderSeedsList(data.items);
-
-      // 分页
-      const pg = $('seedsPagination');
-      let pgHtml = '';
-      if (data.total_pages > 1) {
-        pgHtml = '<button ' + (page <= 1 ? 'disabled' : '') + ' onclick="loadSeedsPage(' + (page - 1) + ')">上一页</button>';
-        pgHtml += '<span>第 ' + page + '/' + data.total_pages + ' 页（共 ' + data.total + ' 条）</span>';
-        pgHtml += '<button ' + (page >= data.total_pages ? 'disabled' : '') + ' onclick="loadSeedsPage(' + (page + 1) + ')">下一页</button>';
-      }
-      pg.innerHTML = pgHtml;
-    } catch (err) {
-      body.innerHTML = '<div class="empty">加载失败: ' + err.message + '</div>';
-    }
-  }
-
-  function renderSeedsList(list) {
-    const body = $('seedsModalBody');
-    if (!list || list.length === 0) {
-      body.innerHTML = '<div class="empty">暂无种子</div>';
-      return;
-    }
-    let html = '';
-    for (const s of list) {
-      const srcBadge = s.source === 'generated'
-        ? '<span class="badge badge-ai">🤖 AI</span>'
-        : '<span class="badge badge-manual">✍️</span>';
-      html += '<div class="modal-seed-item" onclick="openKeywordsModal(\'' + encodeURIComponent(s.seed) + '\')">' +
-        '<div><div class="seed-name">' + escapeHtml(s.seed) + '</div>' +
-        '<div class="seed-meta">' + srcBadge + ' 第' + s.generation + '代</div></div>' +
-        '<div class="seed-meta">' + fmtShort(s.created_at) + '</div></div>';
-    }
-    body.innerHTML = html;
-  }
-
-  function openKeywordsModal(seed) {
-    seed = decodeURIComponent(seed);
-    $('keywordsModalTitle').textContent = '🔍 种子「' + escapeHtml(seed) + '」的关键词';
-    $('keywordsModal').classList.add('open');
-    loadSeedKeywords(seed);
-  }
-
-  function closeKeywordsModal(e) {
-    if (e && e.target !== e.currentTarget) return;
-    $('keywordsModal').classList.remove('open');
-  }
-
-  async function loadSeedKeywords(seed) {
-    const body = $('keywordsModalBody');
-    body.innerHTML = '<div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>';
-
-    try {
-      const url = '/seeds/' + encodeURIComponent(seed) + '/keywords?days=30&limit=100';
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const data = await resp.json();
-
-      if (!data.keywords || data.keywords.length === 0) {
-        body.innerHTML = '<div class="empty">该种子暂无关联关键词</div>';
-        return;
-      }
-
-      let html = '';
-      for (const kw of data.keywords) {
-        const label = kw.blue_ocean_label || '';
-        const scoreColor = kw.blue_ocean_score >= 80 ? '#f5a623' : (kw.blue_ocean_score >= 60 ? '#3ecf8e' : '#8b8fa3');
-        html += '<div class="modal-kw-item">' +
-          '<div class="kw-score" style="color:' + scoreColor + '">' + kw.blue_ocean_score + '</div>' +
-          '<div class="kw-name"><span class="clickable">' + escapeHtml(kw.keyword) + '</span></div>' +
-          '<div class="kw-meta">' + (kw.country || '-') + ' | ' + (kw.top_reviews || 0) + ' 评论</div></div>';
-      }
-      body.innerHTML = html;
-    } catch (err) {
-      body.innerHTML = '<div class="empty">加载失败: ' + err.message + '</div>';
-    }
-  }
-
-  /* 暴露到全局供 onclick 调用 */
-  window.loadData = loadData;
-  window.openSeedsModal = openSeedsModal;
-  window.closeSeedsModal = closeSeedsModal;
-  window.loadSeedsPage = loadSeedsPage;
-  window.openKeywordsModal = openKeywordsModal;
-  window.closeKeywordsModal = closeKeywordsModal;
-
-  /* 验证登录后自动加载 */
-  fetch('/auth/me').then(r => {
-    if (!r.ok) { window.top.location.href = '/static/index.html'; return; }
-    loadData();
-  }).catch(() => { window.top.location.href = '/static/index.html'; });
-
+  loadStatus();
+  loadSeeds();
 })();
 </script>
 </body>

@@ -15,9 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from aso_core.scanner import run_full_scan
-from aso_core.scorer import blue_ocean_label, blue_ocean_score
+from aso_core.scorer import blue_ocean_label, blue_ocean_score, blue_ocean_score_bayesian
 
 from ..auth import verify_api_key_or_cookie as verify_api_key
+from ..bayesian_updater import get_current_priors
 from ..database import (
     create_running_job,
     get_active_seeds,
@@ -109,11 +110,14 @@ def _run_scan_background(
                 seeds=seeds,
                 mode="full",
             )
+        priors = get_current_priors()
         for r in results:
-            score, flags = blue_ocean_score(r)
+            score, flags, ci_lower, ci_upper = blue_ocean_score_bayesian(r, priors)
             r["blue_ocean_score"] = score
             r["blue_ocean_flags"] = flags
             r["blue_ocean_label"] = blue_ocean_label(score)
+            r["score_ci_lower"] = ci_lower
+            r["score_ci_upper"] = ci_upper
         insert_keywords(results, batch_id, "us")
         if mode == "full":
             run_evolution_after_full_scan(batch_id)
@@ -122,10 +126,13 @@ def _run_scan_background(
             from ..report_engine import run_report_generation, should_generate_report
 
             should, reason, detail = should_generate_report()
-            if should or mode == "full":
-                trigger = "weekly_full" if mode == "full" else "auto_threshold"
-                run_report_generation(triggered_by=trigger)
-                logger.info("[Report] 报告已生成，触发原因: %s", reason)
+            if should:
+                trigger = "auto_scan"
+                result = run_report_generation(triggered_by=trigger)
+                if result.get("skipped"):
+                    logger.info("[Report] 报告生成互斥锁被占用，跳过 triggered_by=auto_scan")
+                else:
+                    logger.info("[Report] 报告已生成，触发原因: %s", reason)
             else:
                 logger.info("[Report] 未触发报告生成，原因: %s，详情: %s", reason, detail)
         except Exception as report_exc:

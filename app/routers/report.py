@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ..auth import verify_api_key_or_cookie as verify_api_key
+from ..auth import verify_api_key_or_cookie as verify_api_key, verify_public_or_auth
 from ..database import get_latest_report, get_report_by_id, get_report_history
 from ..report_engine import (
     get_current_keyword_snapshot,
@@ -39,9 +39,16 @@ def report_generate(
     body: GenerateBody,
     _: Annotated[None, Depends(verify_api_key)],
 ) -> dict:
-    """手动触发一次报告生成（同步执行，通常30秒内）。"""
+    """手动触发一次报告生成（需登录，同步执行）。"""
     try:
         result = run_report_generation(triggered_by="manual")
+        if result.get("skipped"):
+            raise HTTPException(
+                status_code=409,
+                detail="报告生成任务正在执行中，请稍后再试",
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
     return result
@@ -49,9 +56,9 @@ def report_generate(
 
 @router.get("/report/check")
 def report_check(
-    _: Annotated[None, Depends(verify_api_key)],
+    _user: Annotated[dict | None, Depends(verify_public_or_auth)],
 ) -> dict:
-    """检查是否应该触发报告，不实际生成（纯计算，轻量快速）。"""
+    """检查是否应该触发报告（公开只读，无需登录）。"""
     should, reason, detail = should_generate_report()
 
     cooldown_remaining = 0.0
@@ -78,9 +85,9 @@ def report_check(
 
 @router.get("/report/latest")
 def report_latest(
-    _: Annotated[None, Depends(verify_api_key)],
+    _user: Annotated[dict | None, Depends(verify_public_or_auth)],
 ) -> dict:
-    """返回最新一份报告全文。不存在时返回空壳（HTTP 200）。"""
+    """返回最新一份报告全文（公开只读，无需登录）。不存在时返回空壳（HTTP 200）。"""
     row = get_latest_report()
     if row is None:
         return {"id": None, "report_md": None}
@@ -98,10 +105,10 @@ def report_latest(
 
 @router.get("/report/history")
 def report_history_list(
-    _: Annotated[None, Depends(verify_api_key)],
+    _user: Annotated[dict | None, Depends(verify_public_or_auth)],
     limit: int = Query(default=20, ge=1, le=50, description="返回条数，默认20，最大50"),
 ) -> dict:
-    """返回历史报告列表（不含 report_md 全文）。"""
+    """返回历史报告列表（公开只读，无需登录，不含 report_md 全文）。"""
     rows = get_report_history(limit=limit)
     items = []
     for r in rows:
@@ -120,9 +127,9 @@ def report_history_list(
 @router.get("/report/{report_id}")
 def report_detail(
     report_id: int,
-    _: Annotated[None, Depends(verify_api_key)],
+    _user: Annotated[dict | None, Depends(verify_public_or_auth)],
 ) -> dict:
-    """返回指定报告全文，不存在返回 404。"""
+    """返回指定报告全文（公开只读，无需登录），不存在返回 404。"""
     row = get_report_by_id(report_id)
     if row is None:
         raise HTTPException(status_code=404, detail="报告不存在")

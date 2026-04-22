@@ -64,6 +64,18 @@ body{
   gap:12px;
 }
 .nav-user{font-size:13px;color:#8b8fa3}
+.btn-login{
+  background:#4f8ef7;
+  color:#fff;
+  border:none;
+  padding:5px 14px;
+  border-radius:5px;
+  font-size:12px;
+  cursor:pointer;
+  transition:all .15s;
+  font-family:inherit;
+}
+.btn-login:hover{opacity:.85}
 .btn-logout{
   background:transparent;
   color:#e55353;
@@ -92,7 +104,8 @@ body{
   </div>
   <div class="nav-right">
     <span class="nav-user" id="navUser"></span>
-    <button class="btn-logout" onclick="doLogout()">退出</button>
+    <button class="btn-login" id="btnLogin" onclick="goLogin()" style="display:none">登录</button>
+    <button class="btn-logout" id="btnLogout" onclick="doLogout()" style="display:none">退出</button>
   </div>
 </nav>
 <iframe class="main-frame" id="mainFrame" src="/static/seeds-dashboard.html?_t=0"></iframe>
@@ -108,7 +121,6 @@ body{
   function switchTab(tab) {
     tabs.forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    // 添加时间戳参数破坏浏览器缓存，强制重新加载 iframe 内容
     const url = tab.dataset.src;
     const separator = url.includes('?') ? '&' : '?';
     frame.src = url + separator + '_t=' + Date.now();
@@ -118,28 +130,41 @@ body{
     tab.addEventListener('click', () => switchTab(tab));
   });
 
+  // 全局登录状态，供 iframe 页面读取
+  window.__authUser = null;
+
   async function checkAuth() {
     try {
       const resp = await fetch('/auth/me');
-      if (!resp.ok) {
-        window.location.href = '/static/index.html';
-        return;
-      }
-      const data = await resp.json();
-      document.getElementById('navUser').textContent = data.username + '（' + (data.role === 'admin' ? '管理员' : '观察者') + '）';
+      if (resp.ok) {
+        const data = await resp.json();
+        window.__authUser = data;
+        document.getElementById('navUser').textContent = data.username + '（' + (data.role === 'admin' ? '管理员' : '观察者') + '）';
+        document.getElementById('btnLogout').style.display = 'inline-block';
 
-      if (data.role === 'admin') {
-        const agentTab = document.createElement('button');
-        agentTab.className = 'nav-tab';
-        agentTab.dataset.src = '/static/agents.html';
-        agentTab.textContent = '智能体管理';
-        agentTab.addEventListener('click', () => switchTab(agentTab));
-        navTabs.appendChild(agentTab);
+        if (data.role === 'admin') {
+          const agentTab = document.createElement('button');
+          agentTab.className = 'nav-tab';
+          agentTab.dataset.src = '/static/agents.html';
+          agentTab.textContent = '智能体管理';
+          agentTab.addEventListener('click', () => switchTab(agentTab));
+          navTabs.appendChild(agentTab);
+        }
+      } else {
+        // 未登录：显示登录按钮，隐藏退出按钮
+        window.__authUser = null;
+        document.getElementById('btnLogin').style.display = 'inline-block';
       }
     } catch(e) {
-      window.location.href = '/static/index.html';
+      // 网络错误也允许查看公开页面
+      window.__authUser = null;
+      document.getElementById('btnLogin').style.display = 'inline-block';
     }
   }
+
+  window.goLogin = function() {
+    window.location.href = '/static/index.html';
+  };
 
   window.doLogout = async function() {
     try { await fetch('/auth/logout', {method:'POST'}); } catch(e) {}
