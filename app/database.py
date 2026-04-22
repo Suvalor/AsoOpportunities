@@ -321,6 +321,17 @@ def init_db() -> None:
         ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """
+    sql_score_priors = """
+    CREATE TABLE IF NOT EXISTS aso_score_priors (
+      dimension   VARCHAR(64) NOT NULL PRIMARY KEY,
+      alpha       FLOAT       NOT NULL DEFAULT 1.0,
+      beta_param  FLOAT       NOT NULL DEFAULT 1.0,
+      mu          FLOAT       NOT NULL DEFAULT 0.0,
+      sigma_sq    FLOAT       NOT NULL DEFAULT 1.0,
+      n_obs       INT         NOT NULL DEFAULT 0,
+      updated_at  DATETIME    NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """
 
     conn = None
     try:
