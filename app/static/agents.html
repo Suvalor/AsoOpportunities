@@ -162,11 +162,11 @@ tr:hover td{background:rgba(79,142,247,.04)}
   async function checkAuth(){
     try{
       const r=await fetch('/auth/me');
-      if(!r.ok){window.top.location.href='/static/index.html';return false}
+      if(!r.ok){window.top.location.href='/static/dashboard.html';return false}
       const d=await r.json();
       if(d.role!=='admin'){document.body.innerHTML='<div class="empty">需要管理员权限</div>';return false}
       return true;
-    }catch(e){window.top.location.href='/static/index.html';return false}
+    }catch(e){window.top.location.href='/static/dashboard.html';return false}
   }
 
   async function loadAgents(){

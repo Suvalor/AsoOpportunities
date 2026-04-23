@@ -75,7 +75,7 @@ def on_startup() -> None:
 
 @app.get("/")
 def root() -> RedirectResponse:
-    return RedirectResponse(url="/static/index.html")
+    return RedirectResponse(url="/static/dashboard.html")
 
 
 @app.get("/health")
