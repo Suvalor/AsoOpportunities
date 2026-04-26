@@ -28,13 +28,18 @@ class AuthBody(BaseModel):
 
 @router.post("/auth/register")
 def auth_register(body: AuthBody) -> dict:
+    user_count = get_user_count()
+
+    allow_register = os.getenv("ALLOW_REGISTER", "false").lower() == "true"
+    if not allow_register and user_count > 0:
+        raise HTTPException(status_code=403, detail="注册已关闭")
+
     if not _USERNAME_RE.fullmatch(body.username):
         raise HTTPException(
             status_code=400,
             detail="用户名只允许3-32位字母、数字、下划线",
         )
 
-    user_count = get_user_count()
     role = "admin" if user_count == 0 else "viewer"
     pw_hash = hash_password(body.password)
 
@@ -78,6 +83,15 @@ def auth_logout() -> JSONResponse:
     response = JSONResponse(content={"ok": True})
     response.delete_cookie(key="access_token", path="/")
     return response
+
+
+@router.get("/auth/register-status")
+def auth_register_status() -> dict:
+    """返回当前是否允许注册（无需鉴权）。"""
+    allow_env = os.getenv("ALLOW_REGISTER", "false").lower() == "true"
+    if allow_env:
+        return {"allow_register": True}
+    return {"allow_register": get_user_count() == 0}
 
 
 @router.get("/auth/me")

@@ -69,6 +69,10 @@ def on_startup() -> None:
             "仅限本地开发使用，生产环境请移除此配置"
         )
 
+    # 注册开关状态日志
+    allow_reg = os.getenv("ALLOW_REGISTER", "false").lower() == "true"
+    logger.info("ALLOW_REGISTER=%s（%s）", allow_reg, "允许注册" if allow_reg else "禁止注册，零用户时仍放行")
+
     try:
         if get_user_count() == 0:
             print("=" * 50)

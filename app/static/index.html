@@ -116,6 +116,7 @@ body{
 (function(){
   'use strict';
   let isLogin = true;
+  let registerAllowed = false;
 
   const $ = id => document.getElementById(id);
 
@@ -131,7 +132,17 @@ body{
       ? '没有账号？<a onclick="toggleMode()">注册</a>'
       : '已有账号？<a onclick="toggleMode()">登录</a>';
     $('password').autocomplete = isLogin ? 'current-password' : 'new-password';
+    updateSwitchVisibility();
   };
+
+  function updateSwitchVisibility() {
+    const el = $('switchLink');
+    if (isLogin && !registerAllowed) {
+      el.style.display = 'none';
+    } else {
+      el.style.display = '';
+    }
+  }
 
   window.handleSubmit = async function(e) {
     e.preventDefault();
@@ -168,6 +179,13 @@ body{
     }
     return false;
   };
+
+  // 查询注册开关状态，失败时默认隐藏（安全侧失败）
+  fetch('/auth/register-status')
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(data => { registerAllowed = !!data.allow_register; })
+    .catch(() => { registerAllowed = false; })
+    .finally(() => { updateSwitchVisibility(); });
 
   // 已登录则直接跳转
   fetch('/auth/me').then(r => { if(r.ok) window.location.href='/static/dashboard.html'; }).catch(()=>{});
