@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 ENABLE_GPLAY = os.getenv("ENABLE_GPLAY", "true").lower() == "true"
 ENABLE_TRENDS = os.getenv("ENABLE_TRENDS", "true").lower() == "true"
+ENABLE_TRENDS_IOT = os.getenv("ENABLE_TRENDS_IOT", "true").lower() == "true"
 ENABLE_REDDIT = os.getenv("ENABLE_REDDIT", "false").lower() == "true"
 
 # 模块级国家配置（可被环境变量覆盖）
@@ -283,14 +284,41 @@ def _scan_single_country(
             r["gplay_avg_rating"] = 0
             r["cross_platform"] = False
 
-        if ENABLE_TRENDS and r.get("autocomplete_rank", 99) <= 10:
+        if ENABLE_TRENDS:
             geo = country.upper()
-            rising = trends.get_trends_rising_queries(r["keyword"], geo=geo)
-            r["trends_rising"] = trends.keyword_in_rising(r["keyword"], rising)
-            r["trends_rising_count"] = len(rising)
+            # rising queries（仅 top 10 触发，保持原有行为）
+            if r.get("autocomplete_rank", 99) <= 10:
+                rising = trends.get_trends_rising_queries(r["keyword"], geo=geo)
+                r["trends_rising"] = trends.keyword_in_rising(r["keyword"], rising)
+                r["trends_rising_count"] = len(rising)
+            else:
+                r["trends_rising"] = False
+                r["trends_rising_count"] = 0
+
+            # interest over time（可独立开关，默认仅 top 50 关键词查询以控制耗时）
+            if ENABLE_TRENDS_IOT and r.get("autocomplete_rank", 99) <= TREND_TOP_N:
+                iot_data = trends.get_trends_interest_over_time(r["keyword"], geo=geo)
+                r["search_volume_tier"] = iot_data.get("volume_tier", 0)
+                r["trends_avg_interest"] = iot_data.get("avg_interest", 0.0)
+                r["trends_slope"] = iot_data.get("slope", 0.0)
+                r["trends_slope_latest"] = (
+                    iot_data.get("slope_segments", [0])[-1]
+                    if iot_data.get("slope_segments")
+                    else 0.0
+                )
+                time.sleep(rate_sleep)
+            else:
+                r["search_volume_tier"] = 0
+                r["trends_avg_interest"] = 0.0
+                r["trends_slope"] = 0.0
+                r["trends_slope_latest"] = 0.0
         else:
             r["trends_rising"] = False
             r["trends_rising_count"] = 0
+            r["search_volume_tier"] = 0
+            r["trends_avg_interest"] = 0.0
+            r["trends_slope"] = 0.0
+            r["trends_slope_latest"] = 0.0
 
         if ENABLE_REDDIT and mode == "full":
             reddit_data = reddit_signals.get_reddit_demand_signal(r["keyword"])

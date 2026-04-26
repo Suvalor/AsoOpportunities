@@ -88,18 +88,195 @@ body{
   font-family:inherit;
 }
 .btn-logout:hover{background:rgba(229,83,83,.1)}
+
+/* 关键词分析面板 */
+.kw-panel{
+  flex:1;
+  overflow-y:auto;
+  padding:20px 24px;
+  display:none;
+}
+.kw-panel.active{display:block}
 .main-frame{
   flex:1;
   border:none;
   width:100%;
+  display:none;
+}
+.main-frame.active{display:block}
+
+.kw-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-bottom:20px;
+}
+.kw-title{font-size:20px;font-weight:700;white-space:nowrap}
+.kw-filters{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.filter-select{
+  background:#1a1d27;
+  color:#e1e4eb;
+  border:1px solid #2d3148;
+  padding:6px 10px;
+  border-radius:6px;
+  font-size:13px;
+  font-family:inherit;
+  cursor:pointer;
+  min-width:100px;
+}
+.filter-select:focus{outline:none;border-color:#4f8ef7}
+.filter-input{
+  background:#1a1d27;
+  color:#e1e4eb;
+  border:1px solid #2d3148;
+  padding:6px 10px;
+  border-radius:6px;
+  font-size:13px;
+  font-family:inherit;
+  min-width:180px;
+}
+.filter-input:focus{outline:none;border-color:#4f8ef7}
+.filter-input::placeholder{color:#5e6278}
+.btn{
+  background:#4f8ef7;
+  color:#fff;
+  border:none;
+  padding:7px 16px;
+  border-radius:6px;
+  font-size:14px;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:opacity .15s;
+  font-family:inherit;
+}
+.btn:hover{opacity:.85}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+.alert{
+  padding:10px 16px;
+  border-radius:6px;
+  font-size:14px;
+  margin-bottom:16px;
+  display:none;
+}
+.alert-error{background:rgba(229,83,83,.12);border:1px solid #e55353;color:#e55353}
+
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:14px;
+}
+th{
+  text-align:left;
+  padding:10px 12px;
+  background:#161923;
+  color:#8b8fa3;
+  font-weight:600;
+  white-space:nowrap;
+  border-bottom:1px solid #2d3148;
+  position:sticky;
+  top:0;
+  z-index:1;
+}
+td{
+  padding:10px 12px;
+  border-bottom:1px solid #1e2236;
+  vertical-align:middle;
+}
+tr:hover td{background:rgba(79,142,247,.04)}
+.mono{font-family:monospace;font-size:13px;color:#8b8fa3}
+
+/* 评分标签 */
+.label-badge{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:4px;
+  font-size:12px;
+  font-weight:600;
+}
+.label-gold{background:rgba(245,166,35,.15);color:#f5a623}
+.label-ocean{background:rgba(62,207,142,.15);color:#3ecf8e}
+.label-watch{background:rgba(139,143,163,.15);color:#8b8fa3}
+.label-skip{background:rgba(229,83,83,.15);color:#e55353}
+
+/* 搜索量级星标 */
+.tier-stars{font-size:13px;letter-spacing:1px}
+.tier-star-on{color:#f5a623}
+.tier-star-off{color:#2d3148}
+
+/* 色带条 */
+.score-bar-wrap{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.score-bar{
+  width:60px;
+  height:6px;
+  background:#2d3148;
+  border-radius:3px;
+  overflow:hidden;
+  position:relative;
+}
+.score-bar-fill{
+  height:100%;
+  border-radius:3px;
+  transition:width .3s;
+}
+.score-bar-val{
+  font-size:12px;
+  font-family:monospace;
+  min-width:24px;
+}
+
+.loading-overlay{
+  text-align:center;
+  padding:40px 16px;
+  color:#8b8fa3;
+  display:none;
+}
+.spinner{
+  display:inline-block;
+  width:28px;height:28px;
+  border:3px solid #2d3148;
+  border-top-color:#4f8ef7;
+  border-radius:50%;
+  animation:spin .7s linear infinite;
+  margin-bottom:8px;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.empty{
+  text-align:center;
+  padding:32px 16px;
+  color:#5e6278;
+  font-size:14px;
+}
+
+.kw-meta-bar{
+  display:flex;
+  align-items:center;
+  gap:16px;
+  font-size:13px;
+  color:#8b8fa3;
+  margin-bottom:12px;
 }
 </style>
 </head>
 <body>
 <nav class="navbar">
-  <div class="nav-brand">🌱 ASO Engine</div>
+  <div class="nav-brand">ASO Engine</div>
   <div class="nav-tabs" id="navTabs">
-    <button class="nav-tab active" data-src="/static/seeds-dashboard.html">种子进化</button>
+    <button class="nav-tab active" data-view="kw-panel">关键词分析</button>
+    <button class="nav-tab" data-src="/static/seeds-dashboard.html">种子进化</button>
     <button class="nav-tab" data-src="/static/keyword-insights.html">关键词洞察</button>
   </div>
   <div class="nav-right">
@@ -108,70 +285,309 @@ body{
     <button class="btn-logout" id="btnLogout" onclick="doLogout()" style="display:none">退出</button>
   </div>
 </nav>
-<iframe class="main-frame" id="mainFrame" src="/static/seeds-dashboard.html?_t=0"></iframe>
+
+<!-- 关键词分析面板（内嵌） -->
+<div class="kw-panel active" id="kwPanel">
+  <div class="kw-header">
+    <div class="kw-title">关键词分析</div>
+    <div class="kw-filters">
+      <input class="filter-input" id="filterSearch" type="text" placeholder="搜索关键词...">
+      <select class="filter-select" id="filterLabel">
+        <option value="">全部标签</option>
+        <option value="💎 金矿">💎 金矿</option>
+        <option value="🟢 蓝海">🟢 蓝海</option>
+        <option value="🟡 观察">🟡 观察</option>
+        <option value="🔴 跳过">🔴 跳过</option>
+      </select>
+      <select class="filter-select" id="filterTier">
+        <option value="">全部量级</option>
+        <option value="5">5 - 极高</option>
+        <option value="4">4 - 高</option>
+        <option value="3">3 - 中</option>
+        <option value="2">2 - 低</option>
+        <option value="1">1 - 极低</option>
+      </select>
+      <select class="filter-select" id="filterCountry">
+        <option value="">全部国家</option>
+        <option value="us">us</option>
+        <option value="gb">gb</option>
+        <option value="de">de</option>
+        <option value="fr">fr</option>
+        <option value="jp">jp</option>
+      </select>
+      <select class="filter-select" id="filterDays">
+        <option value="7">最近7天</option>
+        <option value="14">最近14天</option>
+        <option value="30" selected>最近30天</option>
+      </select>
+      <button class="btn" id="btnRefresh" onclick="loadKeywords()">刷新</button>
+    </div>
+  </div>
+
+  <div class="alert alert-error" id="alertError"></div>
+
+  <div class="loading-overlay" id="kwLoading">
+    <div class="spinner"></div>
+    <div>正在加载关键词数据...</div>
+  </div>
+
+  <div id="kwContent" style="display:none">
+    <div class="kw-meta-bar" id="kwMeta"></div>
+    <div class="table-wrap" id="kwTableWrap"></div>
+  </div>
+</div>
+
+<!-- iframe 用于种子进化 & 关键词洞察 -->
+<iframe class="main-frame" id="mainFrame" src=""></iframe>
 
 <script>
 (function(){
   'use strict';
 
-  const tabs = document.querySelectorAll('.nav-tab');
-  const frame = document.getElementById('mainFrame');
-  const navTabs = document.getElementById('navTabs');
+  var $ = function(id) { return document.getElementById(id); };
+
+  var tabs = document.querySelectorAll('.nav-tab');
+  var frame = $('mainFrame');
+  var kwPanel = $('kwPanel');
+  var navTabs = $('navTabs');
+  var activeView = 'kw-panel';
 
   function switchTab(tab) {
-    tabs.forEach(t => t.classList.remove('active'));
+    tabs.forEach(function(t) { t.classList.remove('active'); });
     tab.classList.add('active');
-    const url = tab.dataset.src;
-    const separator = url.includes('?') ? '&' : '?';
-    frame.src = url + separator + '_t=' + Date.now();
+
+    var view = tab.dataset.view;
+    var src = tab.dataset.src;
+
+    if (view) {
+      activeView = view;
+      kwPanel.classList.add('active');
+      kwPanel.style.display = 'block';
+      frame.classList.remove('active');
+      frame.style.display = 'none';
+    } else if (src) {
+      activeView = 'iframe';
+      kwPanel.classList.remove('active');
+      kwPanel.style.display = 'none';
+      frame.classList.add('active');
+      frame.style.display = 'block';
+      var separator = src.indexOf('?') !== -1 ? '&' : '?';
+      frame.src = src + separator + '_t=' + Date.now();
+    }
   }
 
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => switchTab(tab));
+  tabs.forEach(function(tab) {
+    tab.addEventListener('click', function() { switchTab(tab); });
   });
 
-  // 全局登录状态，供 iframe 页面读取
+  /* ========== v4 Label 阈值 ========== */
+  function getLabelClass(score) {
+    if (score >= 100) return 'label-gold';
+    if (score >= 70) return 'label-ocean';
+    if (score >= 40) return 'label-watch';
+    return 'label-skip';
+  }
+
+  function getLabelText(score) {
+    if (score >= 100) return '💎 金矿';
+    if (score >= 70) return '🟢 蓝海';
+    if (score >= 40) return '🟡 观察';
+    return '🔴 跳过';
+  }
+
+  /* ========== 搜索量级星标 ========== */
+  function renderTierStars(tier) {
+    tier = tier || 0;
+    var html = '<span class="tier-stars">';
+    for (var i = 1; i <= 5; i++) {
+      html += '<span class="' + (i <= tier ? 'tier-star-on' : 'tier-star-off') + '">★</span>';
+    }
+    html += '</span>';
+    return html;
+  }
+
+  /* ========== 色带条 ========== */
+  function renderScoreBar(value, maxVal, colorFn) {
+    value = value || 0;
+    maxVal = maxVal || 100;
+    var pct = Math.min(100, Math.max(0, (value / maxVal) * 100));
+    var color = colorFn(value);
+    return '<div class="score-bar-wrap">' +
+      '<div class="score-bar"><div class="score-bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
+      '<span class="score-bar-val" style="color:' + color + '">' + value + '</span>' +
+      '</div>';
+  }
+
+  function cvColor(v) {
+    if (v >= 70) return '#f5a623';
+    if (v >= 40) return '#3ecf8e';
+    if (v >= 20) return '#8b8fa3';
+    return '#5e6278';
+  }
+
+  function ltColor(v) {
+    if (v >= 70) return '#3ecf8e';
+    if (v >= 40) return '#4f8ef7';
+    if (v >= 20) return '#8b8fa3';
+    return '#5e6278';
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /* ========== 数据加载 ========== */
+  var allKeywords = [];
+
+  function showError(msg) {
+    var el = $('alertError');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  function hideError() {
+    $('alertError').style.display = 'none';
+  }
+
+  function loadKeywords() {
+    hideError();
+    $('kwLoading').style.display = 'block';
+    $('kwContent').style.display = 'none';
+    $('btnRefresh').disabled = true;
+
+    var days = $('filterDays').value || '30';
+    var url = '/analysis/top?limit=200&days=' + days;
+
+    fetch(url).then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function(data) {
+      allKeywords = data.keywords || [];
+      applyFilters();
+      $('kwLoading').style.display = 'none';
+      $('kwContent').style.display = 'block';
+      $('kwMeta').textContent = '数据更新: ' + (data.generated_at || '-') + ' UTC | 共 ' + data.total + ' 个关键词';
+    }).catch(function(err) {
+      showError('加载失败: ' + err.message);
+      $('kwLoading').style.display = 'none';
+    }).finally(function() {
+      $('btnRefresh').disabled = false;
+    });
+  }
+
+  function applyFilters() {
+    var search = ($('filterSearch').value || '').toLowerCase();
+    var label = $('filterLabel').value || '';
+    var tier = $('filterTier').value || '';
+    var country = $('filterCountry').value || '';
+
+    var filtered = allKeywords.filter(function(kw) {
+      if (search && kw.keyword.toLowerCase().indexOf(search) === -1) return false;
+      if (label) {
+        var kwLabel = getLabelText(kw.blue_ocean_score || 0);
+        if (kwLabel !== label) return false;
+      }
+      if (tier && String(kw.search_volume_tier || 0) !== tier) return false;
+      if (country && (kw.country || '') !== country) return false;
+      return true;
+    });
+
+    renderTable(filtered);
+  }
+
+  function renderTable(list) {
+    var wrap = $('kwTableWrap');
+    if (!list || list.length === 0) {
+      wrap.innerHTML = '<div class="empty">暂无匹配的关键词</div>';
+      return;
+    }
+
+    var html = '<table><thead><tr>' +
+      '<th>关键词</th>' +
+      '<th>评分</th>' +
+      '<th>标签</th>' +
+      '<th>国家</th>' +
+      '<th>搜索量级</th>' +
+      '<th>商业价值</th>' +
+      '<th>长尾潜力</th>' +
+      '<th>竞争评论</th>' +
+      '</tr></thead><tbody>';
+
+    for (var i = 0; i < list.length; i++) {
+      var kw = list[i];
+      var score = kw.blue_ocean_score || 0;
+      var labelClass = getLabelClass(score);
+      var labelText = getLabelText(score);
+      var tier = kw.search_volume_tier || 0;
+      var cv = kw.commercial_value_score || 0;
+      var lt = kw.long_tail_score || 0;
+      var reviews = kw.top_reviews || 0;
+
+      html += '<tr>' +
+        '<td style="font-weight:500">' + escapeHtml(kw.keyword) + '</td>' +
+        '<td style="font-weight:600;color:' + (score >= 100 ? '#f5a623' : (score >= 70 ? '#3ecf8e' : '#8b8fa3')) + '">' + score + '</td>' +
+        '<td><span class="label-badge ' + labelClass + '">' + labelText + '</span></td>' +
+        '<td class="mono">' + (kw.country || '-') + '</td>' +
+        '<td>' + renderTierStars(tier) + '</td>' +
+        '<td>' + renderScoreBar(cv, 100, cvColor) + '</td>' +
+        '<td>' + renderScoreBar(lt, 100, ltColor) + '</td>' +
+        '<td class="mono">' + reviews + '</td>' +
+        '</tr>';
+    }
+
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  /* 筛选器事件 */
+  $('filterSearch').addEventListener('input', applyFilters);
+  $('filterLabel').addEventListener('change', applyFilters);
+  $('filterTier').addEventListener('change', applyFilters);
+  $('filterCountry').addEventListener('change', applyFilters);
+  $('filterDays').addEventListener('change', loadKeywords);
+
+  /* 暴露到全局 */
+  window.loadKeywords = loadKeywords;
+
+  /* ========== 认证 ========== */
   window.__authUser = null;
 
-  async function checkAuth() {
-    try {
-      const resp = await fetch('/auth/me');
-      if (resp.ok) {
-        const data = await resp.json();
-        window.__authUser = data;
-        document.getElementById('navUser').textContent = data.username + '（' + (data.role === 'admin' ? '管理员' : '观察者') + '）';
-        document.getElementById('btnLogout').style.display = 'inline-block';
+  function checkAuth() {
+    fetch('/auth/me').then(function(resp) {
+      if (resp.ok) return resp.json();
+      throw new Error('not authed');
+    }).then(function(data) {
+      window.__authUser = data;
+      $('navUser').textContent = data.username + '(' + (data.role === 'admin' ? 'Admin' : 'Viewer') + ')';
+      $('btnLogout').style.display = 'inline-block';
 
-        if (data.role === 'admin') {
-          const agentTab = document.createElement('button');
-          agentTab.className = 'nav-tab';
-          agentTab.dataset.src = '/static/agents.html';
-          agentTab.textContent = '智能体管理';
-          agentTab.addEventListener('click', () => switchTab(agentTab));
-          navTabs.appendChild(agentTab);
-        }
-      } else {
-        // 未登录：显示登录按钮，隐藏退出按钮
-        window.__authUser = null;
-        document.getElementById('btnLogin').style.display = 'inline-block';
+      if (data.role === 'admin') {
+        var agentTab = document.createElement('button');
+        agentTab.className = 'nav-tab';
+        agentTab.dataset.src = '/static/agents.html';
+        agentTab.textContent = 'Agent Mgmt';
+        agentTab.addEventListener('click', function() { switchTab(agentTab); });
+        navTabs.appendChild(agentTab);
       }
-    } catch(e) {
-      // 网络错误也允许查看公开页面
+    }).catch(function() {
       window.__authUser = null;
-      document.getElementById('btnLogin').style.display = 'inline-block';
-    }
+      $('btnLogin').style.display = 'inline-block';
+    });
   }
 
   window.goLogin = function() {
     window.location.href = '/static/index.html';
   };
 
-  window.doLogout = async function() {
-    try { await fetch('/auth/logout', {method:'POST'}); } catch(e) {}
+  window.doLogout = function() {
+    fetch('/auth/logout', {method:'POST'}).catch(function() {});
     window.location.href = '/static/index.html';
   };
 
   checkAuth();
+  loadKeywords();
+
 })();
 </script>
 </body>

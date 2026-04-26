@@ -83,6 +83,9 @@ a{color:#4f8ef7;text-decoration:none}
 .card--ocean .card-value{color:#3ecf8e}
 .card--new .card-value{color:#4f8ef7}
 .card--version .card-value{color:#a78bfa}
+.card--cv .card-value{color:#f5a623}
+.card--lt .card-value{color:#3ecf8e}
+.card--cv,.card--lt{cursor:default}
 .card{cursor:pointer;transition:transform .15s,box-shadow .15s}
 .card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
 
@@ -274,19 +277,31 @@ tr:hover td{background:rgba(79,142,247,.04)}
         <div class="card-icon">💎</div>
         <div class="card-label">金矿词</div>
         <div class="card-value" id="vGold">-</div>
-        <div class="card-desc">peak_score ≥ 80</div>
+        <div class="card-desc">peak_score >= 100</div>
       </div>
       <div class="card card--ocean" onclick="openKeywordsModal('ocean')">
         <div class="card-icon">🟢</div>
         <div class="card-label">蓝海词</div>
         <div class="card-value" id="vOcean">-</div>
-        <div class="card-desc">peak_score 60-79</div>
+        <div class="card-desc">peak_score 70-99</div>
       </div>
       <div class="card card--new" onclick="openKeywordsModal('new')">
         <div class="card-icon">📈</div>
         <div class="card-label">新增词</div>
         <div class="card-value" id="vNew">-</div>
         <div class="card-desc">7天内首次出现的高分词</div>
+      </div>
+      <div class="card card--cv" style="cursor:default">
+        <div class="card-icon">💰</div>
+        <div class="card-label">平均商业价值</div>
+        <div class="card-value" id="vAvgCV">-</div>
+        <div class="card-desc">所有高分词的平均商业价值评分</div>
+      </div>
+      <div class="card card--lt" style="cursor:default">
+        <div class="card-icon">🎯</div>
+        <div class="card-label">平均长尾潜力</div>
+        <div class="card-value" id="vAvgLT">-</div>
+        <div class="card-desc">所有高分词的平均长尾潜力评分</div>
       </div>
       <div class="card card--version">
         <div class="card-icon">🔄</div>
@@ -582,12 +597,16 @@ tr:hover td{background:rgba(79,142,247,.04)}
   };
 
   /* ========== 渲染 ========== */
+  let kwStatsCache = { avg_cv: 0, avg_lt: 0 };
+
   function renderCards(latest) {
     if (!latest || !latest.id) {
       $('vGold').textContent = '-';
       $('vOcean').textContent = '-';
       $('vNew').textContent = '-';
       $('vVersion').textContent = '-';
+      $('vAvgCV').textContent = '-';
+      $('vAvgLT').textContent = '-';
       return;
     }
     const goldCount = latest.new_gold_count || 0;
@@ -596,6 +615,30 @@ tr:hover td{background:rgba(79,142,247,.04)}
     $('vOcean').textContent = (kwCount - goldCount) + ' 个';
     $('vNew').textContent = goldCount + ' 个';
     $('vVersion').textContent = '第 ' + (latest.prompt_version || 1) + ' 版';
+    $('vAvgCV').textContent = kwStatsCache.avg_cv > 0 ? kwStatsCache.avg_cv.toFixed(1) : '-';
+    $('vAvgLT').textContent = kwStatsCache.avg_lt > 0 ? kwStatsCache.avg_lt.toFixed(1) : '-';
+  }
+
+  /* 加载关键词统计数据 */
+  async function loadKeywordStats() {
+    try {
+      const resp = await fetch('/analysis/top?limit=100&days=30');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const keywords = data.keywords || [];
+      if (keywords.length === 0) return;
+      let sumCv = 0, sumLt = 0, count = keywords.length;
+      for (const kw of keywords) {
+        sumCv += kw.commercial_value_score || 0;
+        sumLt += kw.long_tail_score || 0;
+      }
+      kwStatsCache.avg_cv = count > 0 ? sumCv / count : 0;
+      kwStatsCache.avg_lt = count > 0 ? sumLt / count : 0;
+      $('vAvgCV').textContent = kwStatsCache.avg_cv.toFixed(1);
+      $('vAvgLT').textContent = kwStatsCache.avg_lt.toFixed(1);
+    } catch (err) {
+      // 静默降级，不阻断主流程
+    }
   }
 
   function renderLatestReport(latest) {
@@ -737,6 +780,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
       renderCards(latest);
       renderLatestReport(latest);
       renderHistory(window._historyItems);
+      loadKeywordStats();
 
       if (latest && latest.created_at) {
         $('lastUpdate').textContent = '上次更新: ' + fmtShort(latest.created_at) + ' UTC';
@@ -819,7 +863,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
     let html = '';
     for (const kw of list) {
       const score = kw.blue_ocean_score || 0;
-      const scoreColor = score >= 80 ? '#f5a623' : (score >= 60 ? '#3ecf8e' : '#8b8fa3');
+      const scoreColor = score >= 100 ? '#f5a623' : (score >= 70 ? '#3ecf8e' : '#8b8fa3');
       html += '<div class="modal-kw-item">' +
         '<div class="kw-score" style="color:' + scoreColor + '">' + score + '</div>' +
         '<div class="kw-name"><span class="clickable">' + escapeHtml(kw.keyword) + '</span></div>' +

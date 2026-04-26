@@ -32,6 +32,10 @@ def seeds_list(
         default=None,
         description="筛选状态：active/pending/pruned，不传则返回全部",
     ),
+    category: str | None = Query(
+        default=None,
+        description="筛选分类：pain_point/category_word/trend_word，不传则返回全部",
+    ),
     page: int = Query(default=1, ge=1, description="页码"),
     limit: int = Query(default=50, ge=1, le=200, description="每页数量"),
 ) -> dict:
@@ -41,7 +45,12 @@ def seeds_list(
             status_code=400,
             detail="status 参数须为 active/pending/pruned 或不传",
         )
-    rows, total = get_seeds_list(status=status, page=page, limit=limit)
+    if category is not None and category not in ("pain_point", "category_word", "trend_word"):
+        raise HTTPException(
+            status_code=400,
+            detail="category 参数须为 pain_point/category_word/trend_word 或不传",
+        )
+    rows, total = get_seeds_list(status=status, page=page, limit=limit, category=category)
     total_pages = (total + limit - 1) // limit if limit > 0 else 0
     return {
         "items": rows,

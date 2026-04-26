@@ -77,10 +77,11 @@ def decrypt_api_key(cipher: str) -> str:
 
 def bootstrap_default_seeds_if_empty() -> None:
     """
-    若 aso_seeds 为空，将 aso_core.config_data.SEEDS 批量写入，
+    若 aso_seeds 为空，将 aso_core.config_data.SEEDS_V2 批量写入，
     status=active，source=manual，generation=0。
+    若 category 列已存在则写入 category 字段，否则降级为旧格式。
     """
-    from aso_core.config_data import SEEDS as CORE_SEEDS
+    from aso_core.config_data import SEEDS_V2
 
     conn = None
     try:
@@ -90,14 +91,35 @@ def bootstrap_default_seeds_if_empty() -> None:
             row = cur.fetchone()
             if row and int(row["c"]) > 0:
                 return
-            sql = """
-            INSERT IGNORE INTO aso_seeds
-              (seed, status, source, generation, created_at, updated_at)
-            VALUES (%s, 'active', 'manual', 0, NOW(), NOW())
-            """
-            cur.executemany(sql, [(s,) for s in CORE_SEEDS])
+
+            # 检查 category 列是否存在
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'aso_seeds' "
+                "AND COLUMN_NAME = 'category'"
+            )
+            has_category = cur.fetchone()["c"] > 0
+
+            if has_category:
+                sql = """
+                INSERT IGNORE INTO aso_seeds
+                  (seed, status, source, category, generation, created_at, updated_at)
+                VALUES (%s, 'active', 'manual', %s, 0, NOW(), NOW())
+                """
+                cur.executemany(
+                    sql, [(e["seed"], e["category"]) for e in SEEDS_V2]
+                )
+            else:
+                sql = """
+                INSERT IGNORE INTO aso_seeds
+                  (seed, status, source, generation, created_at, updated_at)
+                VALUES (%s, 'active', 'manual', 0, NOW(), NOW())
+                """
+                cur.executemany(
+                    sql, [(e["seed"],) for e in SEEDS_V2]
+                )
         conn.commit()
-        logger.info("已初始化 aso_seeds，共 %d 条默认种子", len(CORE_SEEDS))
+        logger.info("已初始化 aso_seeds，共 %d 条默认种子", len(SEEDS_V2))
     except Exception as exc:
         logger.error("bootstrap_default_seeds_if_empty 失败: %s", exc)
         raise
@@ -118,6 +140,9 @@ _ALLOWED_COLUMNS = frozenset({
     "trends_rising", "trends_rising_count", "reddit_post_count", "reddit_avg_score",
     "score_ci_lower", "score_ci_upper",
     "auth_type",
+    "search_volume_tier", "trends_avg_interest", "trends_slope",
+    "trends_slope_latest", "commercial_value_score", "long_tail_score",
+    "category",
 })
 
 
@@ -373,6 +398,23 @@ def init_db() -> None:
         for col_name, col_def in _agent_new_columns:
             _add_column_if_not_exists(conn, "aso_agents", col_name, col_def)
 
+        # v4: aso_keywords 新增 6 列
+        _v4_keyword_columns = [
+            ("search_volume_tier", "TINYINT DEFAULT 0"),
+            ("trends_avg_interest", "FLOAT DEFAULT 0"),
+            ("trends_slope", "FLOAT DEFAULT 0"),
+            ("trends_slope_latest", "FLOAT DEFAULT 0"),
+            ("commercial_value_score", "INT DEFAULT 0"),
+            ("long_tail_score", "INT DEFAULT 0"),
+        ]
+        for col_name, col_def in _v4_keyword_columns:
+            _add_column_if_not_exists(conn, "aso_keywords", col_name, col_def)
+
+        # v4: aso_seeds 增加 category 列
+        _add_column_if_not_exists(
+            conn, "aso_seeds", "category", "VARCHAR(32) DEFAULT NULL AFTER `source`"
+        )
+
         bootstrap_default_seeds_if_empty()
     except Exception as exc:
         logger.error("init_db 失败: %s", exc)
@@ -458,10 +500,13 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
       gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
       gplay_top_installs_num, gplay_avg_rating, cross_platform,
       trends_rising, trends_rising_count, reddit_post_count, reddit_avg_score,
-      score_ci_lower, score_ci_upper
+      score_ci_lower, score_ci_upper,
+      search_volume_tier, trends_avg_interest, trends_slope,
+      trends_slope_latest, commercial_value_score, long_tail_score
     ) VALUES (
       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+      %s, %s, %s, %s, %s, %s
     )
     """
     tuples: list[tuple] = []
@@ -500,6 +545,12 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
                 float(r.get("reddit_avg_score") or 0),
                 r.get("score_ci_lower"),
                 r.get("score_ci_upper"),
+                int(r.get("search_volume_tier") or 0),
+                float(r.get("trends_avg_interest") or 0),
+                float(r.get("trends_slope") or 0),
+                float(r.get("trends_slope_latest") or 0),
+                int(r.get("commercial_value_score") or 0),
+                int(r.get("long_tail_score") or 0),
             )
         )
 
@@ -544,12 +595,14 @@ def get_top_keywords(
     countries: list[str] | None = None,
     cross_platform: bool | None = None,
     trends_only: bool | None = None,
+    volume_tier: int | None = None,
 ) -> list[dict]:
     """
     按时间窗口与可选标签、可选国家列表筛选，按 blue_ocean_score 降序返回关键词摘要。
     同一 (keyword, country) 只保留最高分那条，避免跨批次/跨种子重复。
     countries 为 None 时不过滤国家；传入时仅保留 country IN (...) 的行。
     cross_platform=True 时仅返回双平台词；trends_only=True 时仅返回 Trends 上升词。
+    volume_tier 不为 None 时仅返回 search_volume_tier = volume_tier 的行。
     limit 最大 200。
     """
     limit = min(max(limit, 1), 200)
@@ -576,6 +629,9 @@ def get_top_keywords(
                 where_extra += " AND cross_platform = 1"
             if trends_only is True:
                 where_extra += " AND trends_rising = 1"
+            if volume_tier is not None:
+                where_extra += " AND search_volume_tier = %s"
+                params.append(volume_tier)
             params.append(limit)
 
             # 按 (keyword, country) 去重，保留 blue_ocean_score 最高的一条
@@ -586,7 +642,8 @@ def get_top_keywords(
                            gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
                            gplay_top_installs_num, gplay_avg_rating, cross_platform,
                            trends_rising, trends_rising_count,
-                           reddit_post_count, reddit_avg_score
+                           reddit_post_count, reddit_avg_score,
+                           search_volume_tier, commercial_value_score, long_tail_score
                     FROM (
                         SELECT *, ROW_NUMBER() OVER (
                             PARTITION BY keyword, country
@@ -855,7 +912,8 @@ def get_top_keywords_for_batch(batch_id: str, limit: int) -> list[dict]:
             cur.execute(
                 """
                 SELECT keyword, blue_ocean_score, seed, blue_ocean_flags,
-                       cross_platform, trends_rising
+                       cross_platform, trends_rising,
+                       search_volume_tier, trends_slope
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY keyword
@@ -891,11 +949,22 @@ def get_seeds_status_snapshot() -> dict:
                 """
             )
             counts = {str(r["status"]): int(r["c"]) for r in cur.fetchall()}
+
+            cur.execute(
+                """
+                SELECT category, COUNT(*) AS c FROM aso_seeds
+                WHERE category IS NOT NULL AND category != ''
+                GROUP BY category
+                """
+            )
+            category_counts = {str(r["category"]): int(r["c"]) for r in cur.fetchall()}
+
             cur.execute("SELECT COALESCE(MAX(generation), 0) AS m FROM aso_seeds")
             max_gen = int(cur.fetchone()["m"] or 0)
             cur.execute(
                 """
-                SELECT seed, status, source, generation, created_at, updated_at
+                SELECT seed, status, source, generation, created_at, updated_at,
+                       category
                 FROM aso_seeds
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
@@ -909,6 +978,7 @@ def get_seeds_status_snapshot() -> dict:
                         "seed": r["seed"],
                         "status": r["status"],
                         "source": r["source"],
+                        "category": r.get("category") or "",
                         "generation": int(r["generation"] or 0),
                         "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
                         if hasattr(r["created_at"], "strftime")
@@ -950,6 +1020,7 @@ def get_seeds_status_snapshot() -> dict:
             "pending_count": int(counts.get("pending", 0)),
             "pruned_count": int(counts.get("pruned", 0)),
             "max_generation": max_gen,
+            "category_counts": category_counts,
             "pending_preview": pending_preview,
             "recent_evolution_events": recent_events,
         }
@@ -965,6 +1036,7 @@ def get_seeds_list(
     status: str | None = None,
     page: int = 1,
     limit: int = 50,
+    category: str | None = None,
 ) -> tuple[list[dict], int]:
     """
     分页获取种子列表。
@@ -978,33 +1050,31 @@ def get_seeds_list(
     try:
         conn = _get_connection()
         with conn.cursor() as cur:
-            # 先获取总数
+            where_parts: list[str] = []
+            params: list[Any] = []
             if status:
-                count_sql = "SELECT COUNT(*) AS c FROM aso_seeds WHERE status = %s"
-                cur.execute(count_sql, (status,))
-            else:
-                count_sql = "SELECT COUNT(*) AS c FROM aso_seeds"
-                cur.execute(count_sql)
+                where_parts.append("status = %s")
+                params.append(status)
+            if category:
+                where_parts.append("category = %s")
+                params.append(category)
+            where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+            # 先获取总数
+            count_sql = "SELECT COUNT(*) AS c FROM aso_seeds" + where_clause
+            cur.execute(count_sql, tuple(params))
             total = int(cur.fetchone()["c"] or 0)
 
             # 获取列表
-            if status:
-                sql = """
-                    SELECT seed, status, source, generation, created_at, updated_at
-                    FROM aso_seeds
-                    WHERE status = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                """
-                cur.execute(sql, (status, limit, offset))
-            else:
-                sql = """
-                    SELECT seed, status, source, generation, created_at, updated_at
-                    FROM aso_seeds
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                """
-                cur.execute(sql, (limit, offset))
+            sql = """
+                SELECT seed, status, source, generation, created_at, updated_at,
+                       category
+                FROM aso_seeds
+                {where}
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            """.format(where=where_clause)
+            cur.execute(sql, tuple(params) + (limit, offset))
 
             rows = []
             for r in cur.fetchall():
@@ -1012,6 +1082,7 @@ def get_seeds_list(
                     "seed": r["seed"],
                     "status": r["status"],
                     "source": r["source"],
+                    "category": r.get("category") or "",
                     "generation": int(r["generation"] or 0),
                     "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
                         if hasattr(r["created_at"], "strftime")
@@ -1048,7 +1119,8 @@ def get_seed_keywords(
             cur.execute(
                 """
                 SELECT keyword, country, blue_ocean_score, blue_ocean_label,
-                       top_reviews, concentration, scanned_at
+                       top_reviews, concentration, scanned_at,
+                       commercial_value_score, long_tail_score
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY keyword, country
@@ -1073,6 +1145,8 @@ def get_seed_keywords(
                     "blue_ocean_label": r.get("blue_ocean_label") or "",
                     "top_reviews": r.get("top_reviews"),
                     "concentration": float(r["concentration"]) if r.get("concentration") is not None else None,
+                    "commercial_value_score": int(r.get("commercial_value_score") or 0),
+                    "long_tail_score": int(r.get("long_tail_score") or 0),
                     "scanned_at": r["scanned_at"].strftime("%Y-%m-%d %H:%M:%S")
                         if hasattr(r.get("scanned_at"), "strftime")
                         else str(r.get("scanned_at") or ""),
@@ -1862,7 +1936,8 @@ def get_batch_label_stats(batch_id: str) -> list[dict]:
                        top_reviews, seed_coverage, concentration,
                        avg_update_age_months, trend_gap, rank_change,
                        cross_platform, trends_rising, reddit_post_count,
-                       gplay_top_installs_num
+                       gplay_top_installs_num, autocomplete_rank,
+                       search_volume_tier
                 FROM aso_keywords
                 WHERE scan_batch_id = %s
                 """,

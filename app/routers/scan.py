@@ -15,7 +15,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from aso_core.scanner import run_full_scan
-from aso_core.scorer import blue_ocean_label, blue_ocean_score, blue_ocean_score_bayesian
+from aso_core.scorer import (
+    _SCORER_VERSION,
+    _commercial_value,
+    _long_tail_potential,
+    blue_ocean_label,
+    get_scorer,
+)
 
 from ..auth import verify_api_key_or_cookie as verify_api_key
 from ..bayesian_updater import get_current_priors
@@ -111,13 +117,19 @@ def _run_scan_background(
                 mode="full",
             )
         priors = get_current_priors()
+        scorer_fn = get_scorer()
         for r in results:
-            score, flags, ci_lower, ci_upper = blue_ocean_score_bayesian(r, priors)
+            score, flags, ci_lower, ci_upper = scorer_fn(r, priors)
             r["blue_ocean_score"] = score
             r["blue_ocean_flags"] = flags
             r["blue_ocean_label"] = blue_ocean_label(score)
             r["score_ci_lower"] = ci_lower
             r["score_ci_upper"] = ci_upper
+            if _SCORER_VERSION >= 4:
+                cv, _ = _commercial_value(r)
+                lt, _ = _long_tail_potential(r)
+                r["commercial_value_score"] = int(round(cv))
+                r["long_tail_score"] = int(round(lt))
         insert_keywords(results, batch_id, "us")
         if mode == "full":
             run_evolution_after_full_scan(batch_id)

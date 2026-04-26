@@ -124,6 +124,9 @@ tr:hover td{background:rgba(79,142,247,.04)}
 }
 .badge-ai{background:rgba(79,142,247,.15);color:#4f8ef7}
 .badge-manual{background:rgba(245,166,35,.15);color:#f5a623}
+.badge-cat-pain{background:rgba(79,142,247,.15);color:#4f8ef7}
+.badge-cat-category{background:rgba(139,143,163,.15);color:#8b8fa3}
+.badge-cat-trend{background:rgba(62,207,142,.15);color:#3ecf8e}
 .mono{font-family:monospace;font-size:13px;color:#8b8fa3}
 
 /* 时间线 */
@@ -237,6 +240,28 @@ tr:hover td{background:rgba(79,142,247,.04)}
 .modal-kw-item .kw-meta{font-size:12px;color:#8b8fa3}
 .clickable{cursor:pointer;color:#4f8ef7}
 .clickable:hover{text-decoration:underline}
+
+/* 色带条 */
+.score-bar-wrap{display:flex;align-items:center;gap:6px}
+.score-bar{width:50px;height:5px;background:#2d3148;border-radius:3px;overflow:hidden}
+.score-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.score-bar-val{font-size:11px;font-family:monospace;min-width:20px}
+
+/* 分类筛选按钮 */
+.cat-filters{display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.cat-btn{
+  background:#1a1d27;
+  color:#8b8fa3;
+  border:1px solid #2d3148;
+  padding:5px 12px;
+  border-radius:5px;
+  font-size:13px;
+  cursor:pointer;
+  transition:all .15s;
+  font-family:inherit;
+}
+.cat-btn:hover{border-color:#4f8ef7;color:#e1e4eb}
+.cat-btn.active{background:#4f8ef7;color:#fff;border-color:#4f8ef7}
 </style>
 </head>
 <body>
@@ -253,6 +278,15 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
   <!-- 提示 -->
   <div class="alert alert-error" id="alertError"></div>
+
+  <!-- 分类筛选 -->
+  <div class="cat-filters" id="catFilters" style="display:none">
+    <span style="font-size:13px;color:#8b8fa3">分类筛选：</span>
+    <button class="cat-btn active" data-cat="" onclick="filterByCategory('')">全部</button>
+    <button class="cat-btn" data-cat="pain_point" onclick="filterByCategory('pain_point')">痛点场景</button>
+    <button class="cat-btn" data-cat="category_word" onclick="filterByCategory('category_word')">品类词</button>
+    <button class="cat-btn" data-cat="trend_word" onclick="filterByCategory('trend_word')">趋势词</button>
+  </div>
 
   <!-- 加载中 -->
   <div class="loading-overlay" id="loading">
@@ -342,6 +376,8 @@ tr:hover td{background:rgba(79,142,247,.04)}
   const $ = (id) => document.getElementById(id);
 
   /* ========== UI 辅助 ========== */
+  let currentPendingPreview = [];
+
   function showError(msg) {
     const el = $('alertError');
     el.textContent = msg;
@@ -458,23 +494,32 @@ tr:hover td{background:rgba(79,142,247,.04)}
     $('vGen').textContent = '第 ' + data.max_generation + ' 代';
   }
 
+  function categoryBadge(cat) {
+    if (cat === 'pain_point') return '<span class="badge badge-cat-pain">痛点场景</span>';
+    if (cat === 'category_word') return '<span class="badge badge-cat-category">品类词</span>';
+    if (cat === 'trend_word') return '<span class="badge badge-cat-trend">趋势词</span>';
+    return '<span class="badge" style="background:rgba(139,143,163,.1);color:#5e6278">-</span>';
+  }
+
   function renderPendingTable(list) {
-    const wrap = $('pendingTable');
+    var wrap = $('pendingTable');
     if (!list || list.length === 0) {
       wrap.innerHTML = '<div class="empty">暂无待激活种子</div>';
       return;
     }
-    let html = '<div class="table-wrap"><table><thead><tr>' +
-      '<th>种子词</th><th>来源</th><th>代数</th><th>创建时间（UTC）</th>' +
+    var html = '<div class="table-wrap"><table><thead><tr>' +
+      '<th>种子词</th><th>来源</th><th>分类</th><th>代数</th><th>创建时间（UTC）</th>' +
       '</tr></thead><tbody>';
-    for (const s of list) {
-      const srcBadge = s.source === 'generated'
-        ? '<span class="badge badge-ai">🤖 AI生成</span>'
-        : '<span class="badge badge-manual">✍️ 手动</span>';
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      var srcBadge = s.source === 'generated'
+        ? '<span class="badge badge-ai">AI生成</span>'
+        : '<span class="badge badge-manual">手动</span>';
       html += '<tr>' +
         '<td>' + escapeHtml(s.seed) + '</td>' +
         '<td>' + srcBadge + '</td>' +
-        '<td style="text-align:center">' + (s.generation ?? '-') + '</td>' +
+        '<td>' + categoryBadge(s.category || '') + '</td>' +
+        '<td style="text-align:center">' + (s.generation != null ? s.generation : '-') + '</td>' +
         '<td class="mono">' + fmtShort(s.created_at) + '</td>' +
         '</tr>';
     }
@@ -525,12 +570,18 @@ tr:hover td{background:rgba(79,142,247,.04)}
       const data = await resp.json();
 
       renderCards(data);
-      renderPendingTable(data.pending_preview);
+      currentPendingPreview = data.pending_preview || [];
+      renderPendingTable(applyCategoryFilter(currentPendingPreview));
       renderTimeline(data.recent_evolution_events);
 
       $('lastUpdate').textContent = '上次更新：' + (data.generated_at || '-') + '（UTC）';
       $('btnRefresh').style.display = 'inline-block';
       $('mainContent').style.display = 'block';
+
+      // 显示分类筛选器
+      if (data.category_counts && Object.keys(data.category_counts).length > 0) {
+        $('catFilters').style.display = 'flex';
+      }
 
     } catch (err) {
       showError('无法连接到服务，请检查服务是否启动');
@@ -542,6 +593,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
   /* ========== 弹窗功能 ========== */
   let currentSeedsPage = 1;
   let currentSeedsStatus = 'active';
+  let currentCategoryFilter = '';
   let seedsCache = {};
 
   function openSeedsModal(status) {
@@ -564,7 +616,10 @@ tr:hover td{background:rgba(79,142,247,.04)}
     body.innerHTML = '<div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>';
 
     try {
-      const url = '/seeds/list?status=' + encodeURIComponent(currentSeedsStatus) + '&page=' + page + '&limit=20';
+      let url = '/seeds/list?status=' + encodeURIComponent(currentSeedsStatus) + '&page=' + page + '&limit=20';
+      if (currentCategoryFilter) {
+        url += '&category=' + encodeURIComponent(currentCategoryFilter);
+      }
       const resp = await fetch(url);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
@@ -587,19 +642,21 @@ tr:hover td{background:rgba(79,142,247,.04)}
   }
 
   function renderSeedsList(list) {
-    const body = $('seedsModalBody');
+    var body = $('seedsModalBody');
     if (!list || list.length === 0) {
       body.innerHTML = '<div class="empty">暂无种子</div>';
       return;
     }
-    let html = '';
-    for (const s of list) {
-      const srcBadge = s.source === 'generated'
-        ? '<span class="badge badge-ai">🤖 AI</span>'
-        : '<span class="badge badge-manual">✍️</span>';
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      var srcBadge = s.source === 'generated'
+        ? '<span class="badge badge-ai">AI</span>'
+        : '<span class="badge badge-manual">手动</span>';
+      var catBadge = categoryBadge(s.category || '');
       html += '<div class="modal-seed-item" onclick="openKeywordsModal(\'' + encodeURIComponent(s.seed) + '\')">' +
         '<div><div class="seed-name">' + escapeHtml(s.seed) + '</div>' +
-        '<div class="seed-meta">' + srcBadge + ' 第' + s.generation + '代</div></div>' +
+        '<div class="seed-meta">' + srcBadge + ' ' + catBadge + ' 第' + s.generation + '代</div></div>' +
         '<div class="seed-meta">' + fmtShort(s.created_at) + '</div></div>';
     }
     body.innerHTML = html;
@@ -615,6 +672,40 @@ tr:hover td{background:rgba(79,142,247,.04)}
   function closeKeywordsModal(e) {
     if (e && e.target !== e.currentTarget) return;
     $('keywordsModal').classList.remove('open');
+  }
+
+  /* ========== 色带条辅助 ========== */
+  function renderScoreBar(value, maxVal, colorFn) {
+    value = value || 0;
+    maxVal = maxVal || 100;
+    var pct = Math.min(100, Math.max(0, (value / maxVal) * 100));
+    var color = colorFn(value);
+    return '<div class="score-bar-wrap">' +
+      '<div class="score-bar"><div class="score-bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
+      '<span class="score-bar-val" style="color:' + color + '">' + value + '</span>' +
+      '</div>';
+  }
+
+  function cvColor(v) {
+    if (v >= 70) return '#f5a623';
+    if (v >= 40) return '#3ecf8e';
+    if (v >= 20) return '#8b8fa3';
+    return '#5e6278';
+  }
+
+  function ltColor(v) {
+    if (v >= 70) return '#3ecf8e';
+    if (v >= 40) return '#4f8ef7';
+    if (v >= 20) return '#8b8fa3';
+    return '#5e6278';
+  }
+
+  /* ========== v4 Label 阈值 ========== */
+  function getScoreColor(score) {
+    if (score >= 100) return '#f5a623';
+    if (score >= 70) return '#3ecf8e';
+    if (score >= 40) return '#8b8fa3';
+    return '#5e6278';
   }
 
   async function loadSeedKeywords(seed) {
@@ -634,16 +725,44 @@ tr:hover td{background:rgba(79,142,247,.04)}
 
       let html = '';
       for (const kw of data.keywords) {
-        const label = kw.blue_ocean_label || '';
-        const scoreColor = kw.blue_ocean_score >= 80 ? '#f5a623' : (kw.blue_ocean_score >= 60 ? '#3ecf8e' : '#8b8fa3');
-        html += '<div class="modal-kw-item">' +
-          '<div class="kw-score" style="color:' + scoreColor + '">' + kw.blue_ocean_score + '</div>' +
+        const score = kw.blue_ocean_score || 0;
+        const cv = kw.commercial_value_score || 0;
+        const lt = kw.long_tail_score || 0;
+        html += '<div class="modal-kw-item" style="flex-wrap:wrap;gap:8px">' +
+          '<div class="kw-score" style="color:' + getScoreColor(score) + '">' + score + '</div>' +
           '<div class="kw-name"><span class="clickable">' + escapeHtml(kw.keyword) + '</span></div>' +
-          '<div class="kw-meta">' + (kw.country || '-') + ' | ' + (kw.top_reviews || 0) + ' 评论</div></div>';
+          '<div class="kw-meta">' + (kw.country || '-') + ' | ' + (kw.top_reviews || 0) + ' 评论</div>' +
+          '<div style="display:flex;gap:12px;align-items:center;width:100%;padding-left:48px">' +
+            '<span style="font-size:11px;color:#8b8fa3;min-width:40px">商业</span>' + renderScoreBar(cv, 100, cvColor) +
+            '<span style="font-size:11px;color:#8b8fa3;min-width:40px">长尾</span>' + renderScoreBar(lt, 100, ltColor) +
+          '</div></div>';
       }
       body.innerHTML = html;
     } catch (err) {
       body.innerHTML = '<div class="empty">加载失败: ' + err.message + '</div>';
+    }
+  }
+
+  /* ========== 分类筛选 ========== */
+  function applyCategoryFilter(list) {
+    if (!currentCategoryFilter) return list;
+    return (list || []).filter(function(s) {
+      return (s.category || '') === currentCategoryFilter;
+    });
+  }
+
+  function filterByCategory(cat) {
+    currentCategoryFilter = cat;
+    // 更新按钮状态
+    var btns = document.querySelectorAll('.cat-btn');
+    btns.forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.cat === cat);
+    });
+    // 刷新待激活表格（前端筛选）
+    renderPendingTable(applyCategoryFilter(currentPendingPreview));
+    // 如果弹窗打开，也刷新种子列表
+    if ($('seedsModal').classList.contains('open')) {
+      loadSeedsPage(1);
     }
   }
 
@@ -654,6 +773,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
   window.loadSeedsPage = loadSeedsPage;
   window.openKeywordsModal = openKeywordsModal;
   window.closeKeywordsModal = closeKeywordsModal;
+  window.filterByCategory = filterByCategory;
 
   /* 直接加载数据（公开只读，无需登录） */
   loadData();

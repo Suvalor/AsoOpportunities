@@ -17,6 +17,7 @@ from typing import Any
 
 from aso_core.autocomplete import get_autocomplete
 from aso_core.scanner import PRIMARY_COUNTRY
+from aso_core.scorer import _SCORER_VERSION
 
 from .agent_client import call_agent
 from .database import (
@@ -35,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 # 剪枝：本批次内表现过差且矩阵仍保留足够 active 时才剪
 _MIN_ACTIVE_AFTER_PRUNE = 8
-_WEAK_AVG_SCORE = 40.0
+_WEAK_AVG_SCORE_V2V3 = 40.0
+_WEAK_AVG_SCORE_V4 = 55.0
 _WEAK_MIN_KEYWORDS = 3
 
 # 待激活种子校验
@@ -76,6 +78,7 @@ def prune_weak_seeds(batch_id: str) -> list[str]:
     依据本批次聚合结果剪枝：强词数为 0、均分偏低且样本足够时标记 pruned。
     若当前 active 总数过少则跳过剪枝，避免矩阵被清空。
     """
+    weak_threshold = _WEAK_AVG_SCORE_V4 if _SCORER_VERSION >= 4 else _WEAK_AVG_SCORE_V2V3
     stats = get_seed_performance_by_batch(batch_id)
     active_now = get_active_seeds()
     if len(active_now) <= _MIN_ACTIVE_AFTER_PRUNE:
@@ -96,7 +99,7 @@ def prune_weak_seeds(batch_id: str) -> list[str]:
         if kw_n == 0:
             candidates.append((seed, 0))
         # 产出同质（强词为 0）且均分偏低且样本足够
-        elif strong == 0 and avg < _WEAK_AVG_SCORE and kw_n >= _WEAK_MIN_KEYWORDS:
+        elif strong == 0 and avg < weak_threshold and kw_n >= _WEAK_MIN_KEYWORDS:
             candidates.append((seed, avg))
 
     candidates.sort(key=lambda x: x[1])
@@ -137,7 +140,7 @@ def _parse_seed_list_from_llm(text: str) -> list[str]:
     return out
 
 
-def _is_too_similar(new_seed: str, existing_seeds: list[str], threshold: float = 0.6) -> bool:
+def _is_too_similar(new_seed: str, existing_seeds: list[str], threshold: float = 0.4) -> bool:
     """检查新种子是否与现有种子过于相似（词重叠率 Jaccard）。"""
     new_words = set(new_seed.lower().split())
     if not new_words:
@@ -152,7 +155,7 @@ def _is_too_similar(new_seed: str, existing_seeds: list[str], threshold: float =
     return False
 
 
-def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
+def generate_new_seeds(batch_id: str, top_n: int = 30) -> tuple[list[str], str]:
     """
     基于本批次高分关键词调用 Claude 生成新种子，仅写入 pending。
     返回 (本次尝试写入的种子短语列表去重后, 说明字符串)。
@@ -170,8 +173,15 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
             f"- keyword={r.get('keyword')} score={r.get('blue_ocean_score')} "
             f"seed={r.get('seed')} flags={r.get('blue_ocean_flags')} "
             f"cross_platform={r.get('cross_platform', 0)} "
-            f"trends_rising={r.get('trends_rising', 0)}"
+            f"trends_rising={r.get('trends_rising', 0)} "
+            f"volume_tier={r.get('search_volume_tier', 0)} "
+            f"trends_slope={r.get('trends_slope', 0.0):.2f}"
         )
+
+    # 聚合趋势信号
+    rising_count = sum(1 for r in top_rows if r.get('trends_rising'))
+    avg_tier = sum(r.get('search_volume_tier', 0) for r in top_rows) / max(len(top_rows), 1)
+    trends_summary = f"其中 {rising_count} 条趋势上升，平均搜索量级 {avg_tier:.1f}/5"
 
     # 获取现有 active 种子用于去重提示
     active_seeds = get_active_seeds()
@@ -181,16 +191,17 @@ def generate_new_seeds(batch_id: str, top_n: int = 10) -> tuple[list[str], str]:
 
     user_prompt = (
         "你是 ASO 关键词研究专家，专注 App Store 长尾需求挖掘。\n"
-        f"根据下列高蓝海分关键词数据，提出 {top_n} 个以内的新种子词/短语，"
+        f"根据下列高蓝海分关键词数据，提出 {min(top_n, 20)} 个以内的新种子词/短语，"
         "用于 autocomplete 扩展。\n\n"
         "种子词要求：\n"
         "1. 必须是用户真实搜索意图，不是品类名"
         "（❌ 'truck rental' → ✅ 'rent a pickup truck for moving'）\n"
         "2. 优先选择痛点场景词：用户在什么具体困境下会搜索？"
-        "（如 'split rent with roommate'）\n"
+        "（如 'split rent with roommate'）——这是最高优先级要求\n"
         f"3. 避免与已有种子重复或仅做微调（已有种子：{existing_preview}）\n"
         "4. 长度 2-6 个英文单词，模拟真实 App Store 搜索查询\n"
         "5. 每个种子应覆盖一个独特的用户场景，不要生成同场景的多个变体\n\n"
+        "趋势洞察：" + trends_summary + "\n\n"
         "高分关键词数据：\n"
         + "\n".join(lines)
         + "\n\n只输出一个 JSON 字符串数组，"
@@ -333,7 +344,7 @@ def run_evolution_after_full_scan(batch_id: str) -> None:
         logger.exception("prune_weak_seeds 失败: %s", exc)
 
     try:
-        generate_new_seeds(batch_id, top_n=10)
+        generate_new_seeds(batch_id, top_n=30)
     except Exception as exc:
         logger.exception("generate_new_seeds 失败: %s", exc)
 
