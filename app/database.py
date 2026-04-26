@@ -117,6 +117,7 @@ _ALLOWED_COLUMNS = frozenset({
     "gplay_top_installs_num", "gplay_avg_rating", "cross_platform",
     "trends_rising", "trends_rising_count", "reddit_post_count", "reddit_avg_score",
     "score_ci_lower", "score_ci_upper",
+    "auth_type",
 })
 
 
@@ -364,6 +365,13 @@ def init_db() -> None:
         ]
         for col_name, col_def in _new_columns:
             _add_column_if_not_exists(conn, "aso_keywords", col_name, col_def)
+
+        # aso_agents 表增量列
+        _agent_new_columns = [
+            ("auth_type", "ENUM('x_api_key','bearer') NOT NULL DEFAULT 'x_api_key' AFTER `version`"),
+        ]
+        for col_name, col_def in _agent_new_columns:
+            _add_column_if_not_exists(conn, "aso_agents", col_name, col_def)
 
         bootstrap_default_seeds_if_empty()
     except Exception as exc:
@@ -1585,7 +1593,7 @@ def get_all_agents() -> list[dict]:
             cur.execute(
                 """
                 SELECT id, name, base_url, api_key_preview, model, version,
-                       is_active, created_at, updated_at
+                       auth_type, is_active, created_at, updated_at
                 FROM aso_agents ORDER BY id ASC
                 """
             )
@@ -1627,8 +1635,8 @@ def insert_agent(data: dict) -> int:
                 """
                 INSERT INTO aso_agents
                   (name, base_url, api_key_enc, api_key_preview, model, version,
-                   is_active, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                   auth_type, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                 """,
                 (
                     data["name"],
@@ -1637,6 +1645,7 @@ def insert_agent(data: dict) -> int:
                     data["api_key_preview"],
                     data["model"],
                     data.get("version", "2023-06-01"),
+                    data.get("auth_type", "x_api_key"),
                     1 if data.get("is_active", True) else 0,
                 ),
             )
@@ -1654,7 +1663,7 @@ def insert_agent(data: dict) -> int:
 def update_agent(agent_id: int, data: dict) -> None:
     """更新智能体，data 中不含 api_key_enc 时不更新密钥。"""
     _ALLOWED_FIELDS = frozenset({
-        "name", "base_url", "model", "version",
+        "name", "base_url", "model", "version", "auth_type",
         "api_key_enc", "api_key_preview", "is_active",
     })
     set_parts: list[str] = []

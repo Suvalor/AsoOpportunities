@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 import pymysql
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,6 +48,7 @@ def _agent_to_dict(a: dict) -> dict:
         "api_key_preview": a.get("api_key_preview", ""),
         "model": a["model"],
         "version": a.get("version"),
+        "auth_type": a.get("auth_type", "x_api_key"),
         "is_active": bool(a.get("is_active")),
         "created_at": _format_dt(a.get("created_at")),
         "updated_at": _format_dt(a.get("updated_at")),
@@ -60,6 +61,7 @@ class CreateAgentBody(BaseModel):
     api_key: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1, max_length=100)
     version: str = Field(default="2023-06-01", max_length=50)
+    auth_type: Literal["x_api_key", "bearer"] = Field(default="x_api_key")
 
 
 class UpdateAgentBody(BaseModel):
@@ -69,6 +71,7 @@ class UpdateAgentBody(BaseModel):
     model: str | None = None
     version: str | None = None
     is_active: bool | None = None
+    auth_type: Literal["x_api_key", "bearer"] | None = None
 
 
 class AssignmentBody(BaseModel):
@@ -119,6 +122,7 @@ def create_agent_endpoint(
         "api_key_preview": _make_preview(body.api_key),
         "model": body.model,
         "version": body.version,
+        "auth_type": body.auth_type,
     }
     try:
         new_id = insert_agent(data)
@@ -181,6 +185,8 @@ def update_agent_endpoint(
         data["version"] = body.version
     if body.is_active is not None:
         data["is_active"] = body.is_active
+    if body.auth_type is not None:
+        data["auth_type"] = body.auth_type
     if body.api_key is not None and body.api_key.strip():
         try:
             data["api_key_enc"] = encrypt_api_key(body.api_key)
@@ -193,7 +199,7 @@ def update_agent_endpoint(
     except pymysql.err.OperationalError as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"数据库不可用或连接失败：{exc.args[1] if exc.args else str(exc)}",
+            detail="数据库服务暂时不可用",
         ) from exc
     updated = get_agent_by_id(agent_id)
     return _agent_to_dict(updated) if updated else {"id": agent_id}

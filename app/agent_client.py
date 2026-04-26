@@ -1,11 +1,12 @@
 """
-统一智能体调用入口：从数据库读取配置，发起 Anthropic API 请求。
-替代原先在 evolution.py / report_engine.py 中硬编码的 Anthropic 调用。
+统一智能体调用入口：从数据库读取配置，发起 LLM API 请求。
+支持 Anthropic 原生协议 (x-api-key) 和兼容协议 (Bearer Token)。
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from urllib.parse import urlparse
 
@@ -15,7 +16,7 @@ from .database import decrypt_api_key, get_assignment
 
 logger = logging.getLogger(__name__)
 
-# base_url 安全校验：仅允许 https 协议且禁止内网地址
+# base_url 安全校验：禁止内网地址
 _PRIVATE_HOST_RE = re.compile(
     r"^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|localhost|::1|fe80:)",
     re.IGNORECASE,
@@ -34,11 +35,20 @@ def call_agent(usage: str, prompt: str, max_tokens: int = 1000) -> str:
 
     api_key = decrypt_api_key(agent["api_key_enc"])
     base_url = agent["base_url"].rstrip("/")
+    auth_type = agent.get("auth_type") or "x_api_key"
 
-    # SSRF 防护：仅允许 https，禁止内网地址
+    # SSRF 防护：协议校验 + 禁止内网地址
     parsed = urlparse(base_url)
-    if parsed.scheme != "https":
-        raise ValueError(f"智能体 [{agent['name']}] base_url 必须使用 https 协议")
+    allow_http = os.getenv("AGENT_ALLOW_HTTP", "").lower() in ("true", "1", "yes")
+    if parsed.scheme == "http" and not allow_http:
+        raise ValueError(
+            f"智能体 [{agent['name']}] base_url 必须使用 https 协议"
+            "（本地开发可设置 AGENT_ALLOW_HTTP=true）"
+        )
+    if parsed.scheme not in ("https", "http"):
+        raise ValueError(
+            f"智能体 [{agent['name']}] base_url 协议不支持: {parsed.scheme}"
+        )
     if _PRIVATE_HOST_RE.match(parsed.hostname or ""):
         raise ValueError(f"智能体 [{agent['name']}] base_url 不允许指向内网地址")
 
@@ -46,11 +56,19 @@ def call_agent(usage: str, prompt: str, max_tokens: int = 1000) -> str:
     model = agent["model"]
     version = agent.get("version") or "2023-06-01"
 
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": api_key,
-        "anthropic-version": version,
-    }
+    # 认证头部适配
+    if auth_type == "bearer":
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "anthropic-version": version,
+        }
+    else:  # x_api_key (Anthropic 原生)
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": version,
+        }
     payload = {
         "model": model,
         "max_tokens": max_tokens,
@@ -61,6 +79,9 @@ def call_agent(usage: str, prompt: str, max_tokens: int = 1000) -> str:
 
     if resp.status_code == 401:
         raise ValueError(f"智能体 [{agent['name']}] API Key 无效（401）")
+    if resp.status_code == 403:
+        hint = "权限不足或模型不可用" if auth_type == "bearer" else "API Key 权限不足或账户受限"
+        raise ValueError(f"智能体 [{agent['name']}] 请求被拒绝（403）：{hint}")
     if resp.status_code == 404:
         raise ValueError(
             f"智能体 [{agent['name']}] 接口地址不存在（404），请检查配置"

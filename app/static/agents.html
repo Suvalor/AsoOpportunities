@@ -82,6 +82,11 @@ tr:hover td{background:rgba(79,142,247,.04)}
   border-radius:6px;color:#e1e4eb;font-size:14px;outline:none;font-family:inherit;
 }
 .form-group input:focus{border-color:#4f8ef7}
+.form-group select{
+  width:100%;padding:9px 12px;background:#0f1117;border:1px solid #2d3148;
+  border-radius:6px;color:#e1e4eb;font-size:14px;outline:none;font-family:inherit;
+}
+.form-group select:focus{border-color:#4f8ef7}
 .form-hint{font-size:12px;color:#5e6278;margin-top:3px}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
 </style>
@@ -123,6 +128,14 @@ tr:hover td{background:rgba(79,142,247,.04)}
     <div class="form-group">
       <label>Base URL</label>
       <input type="text" id="fBaseUrl" placeholder="https://api.anthropic.com">
+    </div>
+    <div class="form-group">
+      <label>认证方式</label>
+      <select id="fAuthType">
+        <option value="x_api_key">Anthropic 原生 (x-api-key)</option>
+        <option value="bearer">兼容模式 (Bearer Token)</option>
+      </select>
+      <div class="form-hint">Anthropic 原生使用 x-api-key 头部；兼容模式使用 Authorization: Bearer 头部，适配 OpenRouter 等服务</div>
     </div>
     <div class="form-group">
       <label>API Key</label>
@@ -191,12 +204,14 @@ tr:hover td{background:rgba(79,142,247,.04)}
   function renderTable(){
     const w=$('agentTable');
     if(!agentsList.length){w.innerHTML='<div class="empty">暂无智能体，请点击「新建智能体」</div>';return}
-    let h='<div class="table-wrap"><table><thead><tr><th>ID</th><th>名称</th><th>API Key</th><th>模型</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>';
+    let h='<div class="table-wrap"><table><thead><tr><th>ID</th><th>名称</th><th>认证方式</th><th>API Key</th><th>模型</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>';
     for(const a of agentsList){
       const badge=a.is_active?'<span class="badge badge-active">启用</span>':'<span class="badge badge-inactive">停用</span>';
+      const authLabel=a.auth_type==='bearer'?'兼容':'原生';
       h+='<tr>'
         +'<td>'+a.id+'</td>'
         +'<td>'+escapeHtml(a.name)+'</td>'
+        +'<td>'+authLabel+'</td>'
         +'<td class="mono">'+escapeHtml(a.api_key_preview)+'</td>'
         +'<td class="mono">'+escapeHtml(a.model)+'</td>'
         +'<td>'+badge+'</td>'
@@ -235,10 +250,12 @@ tr:hover td{background:rgba(79,142,247,.04)}
   window.openCreateModal=function(){
     $('modalTitle').textContent='新建智能体';
     $('editId').value='';
-    $('fName').value='';$('fBaseUrl').value='https://api.anthropic.com';
+    $('fName').value='';$('fBaseUrl').value='';
+    $('fBaseUrl').placeholder='https://api.anthropic.com';
     $('fApiKey').value='';$('fApiKey').placeholder='sk-ant-...';
     $('fApiKeyHint').textContent='';
     $('fModel').value='';$('fVersion').value='2023-06-01';
+    $('fAuthType').value='x_api_key';
     $('modalOverlay').classList.add('open');
   };
 
@@ -251,10 +268,19 @@ tr:hover td{background:rgba(79,142,247,.04)}
     $('fApiKey').value='';$('fApiKey').placeholder='留空则不修改密钥';
     $('fApiKeyHint').textContent='当前密钥：'+a.api_key_preview;
     $('fModel').value=a.model;$('fVersion').value=a.version||'2023-06-01';
+    $('fAuthType').value=a.auth_type||'x_api_key';
+    updateBaseUrlPlaceholder();
     $('modalOverlay').classList.add('open');
   };
 
   window.closeModal=function(){$('modalOverlay').classList.remove('open')};
+
+  window.updateBaseUrlPlaceholder=function(){
+    const t=$('fAuthType').value;
+    $('fBaseUrl').placeholder=t==='bearer'?'https://openrouter.ai/api':'https://api.anthropic.com';
+  };
+
+  $('fAuthType').addEventListener('change',updateBaseUrlPlaceholder);
 
   window.saveAgent=async function(){
     hideAlerts();
@@ -265,6 +291,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
     body.base_url=$('fBaseUrl').value.trim();
     body.model=$('fModel').value.trim();
     body.version=$('fVersion').value.trim()||'2023-06-01';
+    body.auth_type=$('fAuthType').value;
     const apiKey=$('fApiKey').value.trim();
 
     if(!body.name||!body.base_url||!body.model){showError('名称、Base URL、Model 必填');return}

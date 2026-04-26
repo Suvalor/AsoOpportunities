@@ -62,6 +62,13 @@ def on_startup() -> None:
     init_db()
     logger.info("数据库 init_db 完成")
 
+    # 检查 AGENT_ALLOW_HTTP 安全警告
+    if os.getenv("AGENT_ALLOW_HTTP", "").lower() in ("true", "1", "yes"):
+        logger.warning(
+            "AGENT_ALLOW_HTTP=true：智能体允许使用 http 协议的 base_url，"
+            "仅限本地开发使用，生产环境请移除此配置"
+        )
+
     try:
         if get_user_count() == 0:
             print("=" * 50)
