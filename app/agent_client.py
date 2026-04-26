@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import re
+import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import requests
@@ -21,6 +24,39 @@ _PRIVATE_HOST_RE = re.compile(
     r"^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|localhost|::1|fe80:)",
     re.IGNORECASE,
 )
+
+# 瞬态错误状态码：触发指数退避重试
+_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
+
+# 退避参数：环境变量可覆盖，有最小值保底
+_MAX_RETRIES = max(0, int(os.getenv("AGENT_MAX_RETRIES", "3")))
+_BASE_DELAY = max(0.5, float(os.getenv("AGENT_RETRY_BASE_DELAY", "2.0")))
+
+
+def _parse_retry_after(resp: requests.Response | None) -> float | None:
+    """从响应头解析 Retry-After 值（秒数或 HTTP 日期格式），失败返回 None。"""
+    if resp is None:
+        return None
+    val = resp.headers.get("Retry-After")
+    if val is None:
+        return None
+    try:
+        return max(0.0, float(val))
+    except ValueError:
+        from email.utils import parsedate_to_datetime
+        try:
+            dt = parsedate_to_datetime(val)
+            return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
+        except Exception:
+            return None
+
+
+def _calc_backoff(attempt: int, resp: requests.Response | None) -> float:
+    """计算退避延迟：优先 Retry-After，否则指数退避 + 抖动，最小 0.5 秒。"""
+    retry_after = _parse_retry_after(resp)
+    if retry_after is not None:
+        return max(retry_after, 0.5)
+    return max(_BASE_DELAY * (2 ** (attempt - 1)) * random.uniform(0.5, 1.0), 0.5)
 
 
 def call_agent(usage: str, prompt: str, max_tokens: int = 1000) -> str:
@@ -75,18 +111,92 @@ def call_agent(usage: str, prompt: str, max_tokens: int = 1000) -> str:
         "messages": [{"role": "user", "content": prompt}],
     }
 
-    resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+    for attempt in range(1, max(1, _MAX_RETRIES + 1)):
+        try:
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+        except requests.exceptions.Timeout as exc:
+            if attempt < _MAX_RETRIES:
+                delay = _calc_backoff(attempt, resp=None)
+                logger.warning(
+                    "智能体 [%s] 请求超时（第 %d/%d 次），%.1f 秒后重试",
+                    agent["name"], attempt, _MAX_RETRIES, delay,
+                )
+                time.sleep(delay)
+                continue
+            raise ValueError(
+                f"智能体 [{agent['name']}] 请求超时，已重试 {_MAX_RETRIES} 次仍不可用"
+            ) from exc
+        except requests.exceptions.ConnectionError as exc:
+            if attempt < _MAX_RETRIES:
+                delay = _calc_backoff(attempt, resp=None)
+                logger.warning(
+                    "智能体 [%s] 连接失败（第 %d/%d 次），%.1f 秒后重试",
+                    agent["name"], attempt, _MAX_RETRIES, delay,
+                )
+                time.sleep(delay)
+                continue
+            raise ValueError(
+                f"智能体 [{agent['name']}] 连接失败，已重试 {_MAX_RETRIES} 次仍不可用"
+            ) from exc
 
-    if resp.status_code == 401:
-        raise ValueError(f"智能体 [{agent['name']}] API Key 无效（401）")
-    if resp.status_code == 403:
-        hint = "权限不足或模型不可用" if auth_type == "bearer" else "API Key 权限不足或账户受限"
-        raise ValueError(f"智能体 [{agent['name']}] 请求被拒绝（403）：{hint}")
-    if resp.status_code == 404:
-        raise ValueError(
-            f"智能体 [{agent['name']}] 接口地址不存在（404），请检查配置"
-        )
-    if resp.status_code != 200:
+        # 非瞬态错误：即抛，不走重试
+        if resp.status_code == 401:
+            raise ValueError(f"智能体 [{agent['name']}] API Key 无效（401）")
+        if resp.status_code == 403:
+            hint = "权限不足或模型不可用" if auth_type == "bearer" else "API Key 权限不足或账户受限"
+            raise ValueError(f"智能体 [{agent['name']}] 请求被拒绝（403）：{hint}")
+        if resp.status_code == 404:
+            raise ValueError(
+                f"智能体 [{agent['name']}] 接口地址不存在（404），请检查配置"
+            )
+
+        # 422 / 400 / 409：非瞬态但需提取响应体诊断信息
+        if resp.status_code == 422:
+            try:
+                err_body = resp.json().get("error", {})
+                err_msg = err_body.get("message", resp.text[:500])
+            except Exception:
+                err_msg = resp.text[:500]
+            raise ValueError(f"智能体 [{agent['name']}] 请求被拒绝（422）：{err_msg}")
+        if resp.status_code == 400:
+            try:
+                err_body = resp.json().get("error", {})
+                err_msg = err_body.get("message", resp.text[:500])
+            except Exception:
+                err_msg = resp.text[:500]
+            raise ValueError(f"智能体 [{agent['name']}] 请求无效（400）：{err_msg}")
+        if resp.status_code == 409:
+            try:
+                err_body = resp.json().get("error", {})
+                err_msg = err_body.get("message", resp.text[:500])
+            except Exception:
+                err_msg = resp.text[:500]
+            raise ValueError(f"智能体 [{agent['name']}] 请求冲突（409）：{err_msg}")
+
+        # 成功：跳出重试循环
+        if resp.status_code == 200:
+            break
+
+        # 瞬态错误：429/5xx
+        if resp.status_code in _TRANSIENT_STATUS_CODES:
+            if attempt < _MAX_RETRIES:
+                delay = _calc_backoff(attempt, resp)
+                logger.warning(
+                    "智能体 [%s] 请求失败 %d（第 %d/%d 次），%.1f 秒后重试 | body: %s",
+                    agent["name"], resp.status_code, attempt, _MAX_RETRIES, delay,
+                    resp.text[:300],
+                )
+                time.sleep(delay)
+                continue
+            logger.error(
+                "智能体 [%s] 请求失败 %d，已达最大重试次数 %d",
+                agent["name"], resp.status_code, _MAX_RETRIES,
+            )
+            raise ValueError(
+                f"智能体 [{agent['name']}] 请求失败 {resp.status_code}，已重试 {_MAX_RETRIES} 次仍不可用"
+            )
+
+        # 其他非200非瞬态状态码：即抛
         raise ValueError(
             f"智能体 [{agent['name']}] 请求失败 {resp.status_code}"
         )
