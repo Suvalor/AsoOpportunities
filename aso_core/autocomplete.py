@@ -59,13 +59,13 @@ def get_autocomplete(
         response.raise_for_status()
         data = plistlib.loads(response.content)
         hints = data.get("hints", [])
+        # 只在请求成功时 sleep，避免失败时不必要的延迟
+        time.sleep(sleep)
     except requests.RequestException as exc:
         logger.warning("Autocomplete 请求失败 [%s]: %s", term, exc)
         return []
     except Exception as exc:
         logger.warning("Autocomplete 解析失败 [%s]: %s", term, exc)
         return []
-    finally:
-        time.sleep(sleep)
 
     return [(h["term"], idx + 1) for idx, h in enumerate(hints) if "term" in h]

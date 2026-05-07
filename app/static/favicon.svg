@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- 背景圆形 -->
+  <circle cx="32" cy="32" r="30" fill="#4f8ef7" opacity="0.95"/>
+  
+  <!-- 外框 -->
+  <circle cx="32" cy="32" r="30" fill="none" stroke="#2d5fa3" stroke-width="1.5" opacity="0.6"/>
+  
+  <!-- 绿色种子叶片（代表生长） -->
+  <g transform="translate(32, 20)">
+    <!-- 左叶 -->
+    <path d="M -6 0 Q -10 -8 -8 -14 Q -6 -10 -4 -8 Q -6 -4 -6 0" fill="#3ecf8e" opacity="0.9"/>
+    <!-- 右叶 -->
+    <path d="M 6 0 Q 10 -8 8 -14 Q 6 -10 4 -8 Q 6 -4 6 0" fill="#3ecf8e" opacity="0.85"/>
+    <!-- 中心茎 -->
+    <line x1="0" y1="0" x2="0" y2="16" stroke="#3ecf8e" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+  
+  <!-- 放大镜（代表分析） -->
+  <g transform="translate(32, 35)" opacity="0.3">
+    <circle cx="0" cy="0" r="6" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <line x1="4" y1="4" x2="8" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+</svg>

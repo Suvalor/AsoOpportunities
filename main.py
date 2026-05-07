@@ -22,7 +22,13 @@ from dotenv import load_dotenv
 
 from aso_core.config_data import SEEDS
 from aso_core.scanner import run_full_scan
-from aso_core.scorer import blue_ocean_label, blue_ocean_score
+from aso_core.scorer import (
+    _SCORER_VERSION,
+    _commercial_value,
+    _long_tail_potential,
+    blue_ocean_label,
+    get_scorer,
+)
 from aso_core.settings import get_settings
 
 load_dotenv(override=False)
@@ -53,6 +59,8 @@ OUTPUT_FIELDS = [
     "blue_ocean_score",
     "blue_ocean_flags",
     "blue_ocean_label",
+    "score_ci_lower",
+    "score_ci_upper",
     "gplay_autocomplete_rank",
     "gplay_top_reviews",
     "gplay_top_installs",
@@ -60,36 +68,43 @@ OUTPUT_FIELDS = [
     "cross_platform",
     "trends_rising",
     "trends_rising_count",
+    "search_volume_tier",
+    "trends_avg_interest",
+    "trends_slope",
+    "trends_slope_latest",
     "reddit_post_count",
     "reddit_avg_score",
+    "commercial_value_score",
+    "long_tail_score",
 ]
 
 
 def _print_summary(results: list[dict], history_saved: bool) -> None:
     """打印蓝海分析汇总报告。"""
-    gold = [r for r in results if r["blue_ocean_score"] >= 80]
-    blue = [r for r in results if 60 <= r["blue_ocean_score"] < 80]
-    watch = [r for r in results if 40 <= r["blue_ocean_score"] < 60]
-    skip = [r for r in results if r["blue_ocean_score"] < 40]
+    gold_t, blue_t, watch_t = (100, 70, 40) if _SCORER_VERSION >= 4 else (75, 55, 35)
+    gold = [r for r in results if r["blue_ocean_score"] >= gold_t]
+    blue = [r for r in results if blue_t <= r["blue_ocean_score"] < gold_t]
+    watch = [r for r in results if watch_t <= r["blue_ocean_score"] < blue_t]
+    skip = [r for r in results if r["blue_ocean_score"] < watch_t]
 
     print("\n" + "=" * 60)
     print(f"  ASO 蓝海分析完成 — 共 {len(results)} 个关键词")
     print("=" * 60)
 
-    print(f"\n💎 金矿（≥80分）：{len(gold)} 个")
+    print(f"\n💎 金矿（≥{gold_t}分）：{len(gold)} 个")
     for r in gold:
         print(
             f"   [{int(r['blue_ocean_score']):>5d}] {r['keyword']}  |  {r['blue_ocean_flags']}"
         )
 
-    print(f"\n🟢 蓝海（60-79分）：{len(blue)} 个")
+    print(f"\n🟢 蓝海（{blue_t}-{gold_t-1}分）：{len(blue)} 个")
     for r in blue:
         print(
             f"   [{int(r['blue_ocean_score']):>5d}] {r['keyword']}  |  {r['blue_ocean_flags']}"
         )
 
-    print(f"\n🟡 观察（40-59分）：{len(watch)} 个")
-    print(f"🔴 跳过（<40分）：{len(skip)} 个")
+    print(f"\n🟡 观察（{watch_t}-{blue_t-1}分）：{len(watch)} 个")
+    print(f"🔴 跳过（<{watch_t}分）：{len(skip)} 个")
 
     status = "✅ 成功" if history_saved else "❌ 失败"
     print(f"\nrank_history 写入：{status}")
@@ -107,11 +122,19 @@ def run_cli(seeds_subset: list[str] | None, country: str | None, out_path: Path)
     rank_file = get_settings().rank_history_path
     history_saved = rank_file.exists()
 
+    scorer_fn = get_scorer()
     for r in results:
-        bos, flags = blue_ocean_score(r)
-        r["blue_ocean_score"] = bos
+        score, flags, ci_lower, ci_upper = scorer_fn(r, None)
+        r["blue_ocean_score"] = score
         r["blue_ocean_flags"] = flags
-        r["blue_ocean_label"] = blue_ocean_label(bos)
+        r["blue_ocean_label"] = blue_ocean_label(score)
+        r["score_ci_lower"] = ci_lower
+        r["score_ci_upper"] = ci_upper
+        if _SCORER_VERSION >= 4:
+            cv, _ = _commercial_value(r)
+            lt, _ = _long_tail_potential(r)
+            r["commercial_value_score"] = int(round(cv))
+            r["long_tail_score"] = int(round(lt))
 
     results.sort(key=lambda r: r["blue_ocean_score"], reverse=True)
 

@@ -1,5 +1,5 @@
 """
-分析相关路由：/analysis/top, /analysis/compare
+分析相关路由：/analysis/top, /analysis/compare, /analysis/priors
 """
 
 from __future__ import annotations
@@ -10,7 +10,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..auth import verify_api_key_or_cookie as verify_api_key
+from aso_core.scorer import (
+    _DECAY_RATE_DEFAULTS,
+    _DIMENSION_DEFAULTS,
+    PriorState,
+)
+
+from ..auth import verify_public_or_auth
+from ..bayesian_updater import compute_credible_interval, get_current_priors
 from ..database import get_compare_analysis, get_top_keywords
 
 router = APIRouter(tags=["analysis"])
@@ -42,7 +49,7 @@ def _parse_countries_query(countries: str | None) -> list[str] | None:
 
 @router.get("/analysis/top")
 def analysis_top(
-    _: Annotated[None, Depends(verify_api_key)],
+    _user: Annotated[dict | None, Depends(verify_public_or_auth)],
     label: str | None = None,
     limit: int = 50,
     days: int = 7,
@@ -58,12 +65,17 @@ def analysis_top(
         default=None,
         description="可选，true 时仅返回 Google Trends 上升的词",
     ),
+    volume_tier: int | None = Query(
+        default=None,
+        description="可选，搜索量级筛选 1-5",
+    ),
 ) -> dict:
     """按时间窗口拉取高分关键词列表（供 n8n / AI 分析）。"""
     cc = _parse_countries_query(countries)
     rows = get_top_keywords(
         label=label, limit=limit, days=days, countries=cc,
         cross_platform=cross_platform, trends_only=trends_only,
+        volume_tier=volume_tier,
     )
     generated = datetime.now(timezone.utc).replace(tzinfo=None).strftime(
         "%Y-%m-%d %H:%M:%S"
@@ -99,6 +111,9 @@ def analysis_top(
                 "trends_rising_count": int(r.get("trends_rising_count") or 0),
                 "reddit_post_count": int(r.get("reddit_post_count") or 0),
                 "reddit_avg_score": float(r.get("reddit_avg_score") or 0),
+                "search_volume_tier": int(r.get("search_volume_tier") or 0),
+                "commercial_value_score": int(r.get("commercial_value_score") or 0),
+                "long_tail_score": int(r.get("long_tail_score") or 0),
             }
         )
     return {
@@ -110,7 +125,7 @@ def analysis_top(
 
 @router.get("/analysis/compare")
 def analysis_compare(
-    _: Annotated[None, Depends(verify_api_key)],
+    _user: Annotated[dict | None, Depends(verify_public_or_auth)],
     days_recent: int = 7,
     days_baseline: int = 14,
 ) -> dict:
@@ -138,4 +153,51 @@ def analysis_compare(
         "new_entries": buckets["new_entries"],
         "sustained": buckets["sustained"],
         "dropping": buckets["dropping"],
+    }
+
+
+@router.get("/analysis/priors")
+def analysis_priors(
+    _user: Annotated[dict | None, Depends(verify_public_or_auth)],
+) -> dict:
+    """返回当前贝叶斯先验/后验状态，含可信区间和与原始硬编码权重的对比。"""
+    priors = get_current_priors()
+    generated = datetime.now(timezone.utc).replace(tzinfo=None).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    dimensions: list[dict] = []
+    for dim in sorted(priors.keys()):
+        p = priors[dim]
+        ci_lower, ci_upper = compute_credible_interval(priors, dim, ci=0.95)
+
+        entry: dict = {
+            "dimension": dim,
+            "n_obs": p.n_obs,
+            "ci_lower": ci_lower,
+            "ci_upper": ci_upper,
+        }
+
+        if dim in _DIMENSION_DEFAULTS:
+            default_weight, max_val = _DIMENSION_DEFAULTS[dim]
+            posterior_mean = p.alpha / (p.alpha + p.beta_param) * max_val
+            entry["type"] = "weight"
+            entry["default_weight"] = default_weight
+            entry["posterior_mean"] = round(posterior_mean, 2)
+            entry["max_value"] = max_val
+            entry["alpha"] = round(p.alpha, 2)
+            entry["beta"] = round(p.beta_param, 2)
+        elif dim in _DECAY_RATE_DEFAULTS:
+            default_rate, default_var = _DECAY_RATE_DEFAULTS[dim]
+            entry["type"] = "decay_rate"
+            entry["default_rate"] = default_rate
+            entry["posterior_mean"] = round(p.mu, 6)
+            entry["sigma_sq"] = round(p.sigma_sq, 8)
+
+        dimensions.append(entry)
+
+    return {
+        "generated_at": generated,
+        "total_dimensions": len(dimensions),
+        "dimensions": dimensions,
     }

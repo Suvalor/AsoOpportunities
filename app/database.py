@@ -9,7 +9,8 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import pymysql
@@ -18,6 +19,28 @@ from pymysql import err as pymysql_err
 from pymysql.cursors import DictCursor
 
 logger = logging.getLogger(__name__)
+
+
+def _json_default_for_mysql(o: Any) -> Any:
+    """供 json.dumps 使用：MySQL/PyMySQL 常见不可直接 JSON 化的标量。"""
+    if isinstance(o, datetime):
+        return o.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(o, date):
+        return o.isoformat()
+    if isinstance(o, Decimal):
+        return float(o)
+    raise TypeError(f"类型 {type(o).__name__} 无法序列化为 JSON")
+
+
+def _mysql_row_json_safe(row: dict) -> dict:
+    """将查询行中的日期时间等转为可 JSON 序列化的值（报告快照 keywords_json 等）。"""
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        if isinstance(v, (datetime, date, Decimal)):
+            out[k] = _json_default_for_mysql(v)
+        else:
+            out[k] = v
+    return out
 
 
 # ===================== 智能体 API Key 加解密 =====================
@@ -54,10 +77,11 @@ def decrypt_api_key(cipher: str) -> str:
 
 def bootstrap_default_seeds_if_empty() -> None:
     """
-    若 aso_seeds 为空，将 aso_core.config_data.SEEDS 批量写入，
+    若 aso_seeds 为空，将 aso_core.config_data.SEEDS_V2 批量写入，
     status=active，source=manual，generation=0。
+    若 category 列已存在则写入 category 字段，否则降级为旧格式。
     """
-    from aso_core.config_data import SEEDS as CORE_SEEDS
+    from aso_core.config_data import SEEDS_V2
 
     conn = None
     try:
@@ -67,20 +91,59 @@ def bootstrap_default_seeds_if_empty() -> None:
             row = cur.fetchone()
             if row and int(row["c"]) > 0:
                 return
-            sql = """
-            INSERT IGNORE INTO aso_seeds
-              (seed, status, source, generation, created_at, updated_at)
-            VALUES (%s, 'active', 'manual', 0, NOW(), NOW())
-            """
-            cur.executemany(sql, [(s,) for s in CORE_SEEDS])
+
+            # 检查 category 列是否存在
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'aso_seeds' "
+                "AND COLUMN_NAME = 'category'"
+            )
+            has_category = cur.fetchone()["c"] > 0
+
+            if has_category:
+                sql = """
+                INSERT IGNORE INTO aso_seeds
+                  (seed, status, source, category, generation, created_at, updated_at)
+                VALUES (%s, 'active', 'manual', %s, 0, NOW(), NOW())
+                """
+                cur.executemany(
+                    sql, [(e["seed"], e["category"]) for e in SEEDS_V2]
+                )
+            else:
+                sql = """
+                INSERT IGNORE INTO aso_seeds
+                  (seed, status, source, generation, created_at, updated_at)
+                VALUES (%s, 'active', 'manual', 0, NOW(), NOW())
+                """
+                cur.executemany(
+                    sql, [(e["seed"],) for e in SEEDS_V2]
+                )
         conn.commit()
-        logger.info("已初始化 aso_seeds，共 %d 条默认种子", len(CORE_SEEDS))
+        logger.info("已初始化 aso_seeds，共 %d 条默认种子", len(SEEDS_V2))
     except Exception as exc:
         logger.error("bootstrap_default_seeds_if_empty 失败: %s", exc)
         raise
     finally:
         if conn is not None:
             conn.close()
+
+
+_ALLOWED_TABLES = frozenset({
+    "aso_keywords", "aso_scan_jobs", "aso_seeds",
+    "aso_seed_evolution_log", "aso_analysis_reports", "aso_users",
+    "aso_agents", "aso_agent_assignments", "aso_score_priors",
+})
+
+_ALLOWED_COLUMNS = frozenset({
+    "gplay_autocomplete_rank", "gplay_top_reviews", "gplay_top_installs",
+    "gplay_top_installs_num", "gplay_avg_rating", "cross_platform",
+    "trends_rising", "trends_rising_count", "reddit_post_count", "reddit_avg_score",
+    "score_ci_lower", "score_ci_upper",
+    "auth_type",
+    "search_volume_tier", "trends_avg_interest", "trends_slope",
+    "trends_slope_latest", "commercial_value_score", "long_tail_score",
+    "category",
+})
 
 
 def _add_column_if_not_exists(
@@ -90,6 +153,10 @@ def _add_column_if_not_exists(
     definition: str,
 ) -> None:
     """若列不存在则 ALTER TABLE ADD COLUMN（MySQL 8.0 兼容）。"""
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"不允许的表名: {table!r}")
+    if column not in _ALLOWED_COLUMNS:
+        raise ValueError(f"不允许的列名: {column!r}")
     check_sql = """
         SELECT COUNT(*) AS c FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
@@ -100,6 +167,7 @@ def _add_column_if_not_exists(
         cur.execute(check_sql, (table, column))
         row = cur.fetchone()
         if row and int(row["c"]) == 0:
+            # table/column 已通过白名单校验，definition 来自内部常量
             cur.execute(
                 f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}"
             )
@@ -279,6 +347,17 @@ def init_db() -> None:
         ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """
+    sql_score_priors = """
+    CREATE TABLE IF NOT EXISTS aso_score_priors (
+      dimension   VARCHAR(64) NOT NULL PRIMARY KEY,
+      alpha       FLOAT       NOT NULL DEFAULT 1.0,
+      beta_param  FLOAT       NOT NULL DEFAULT 1.0,
+      mu          FLOAT       NOT NULL DEFAULT 0.0,
+      sigma_sq    FLOAT       NOT NULL DEFAULT 1.0,
+      n_obs       INT         NOT NULL DEFAULT 0,
+      updated_at  DATETIME    NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """
 
     conn = None
     try:
@@ -292,6 +371,7 @@ def init_db() -> None:
             cur.execute(sql_users)
             cur.execute(sql_agents)
             cur.execute(sql_assignments)
+            cur.execute(sql_score_priors)
         conn.commit()
 
         _new_columns = [
@@ -305,9 +385,35 @@ def init_db() -> None:
             ("trends_rising_count", "INT DEFAULT 0"),
             ("reddit_post_count", "INT DEFAULT 0"),
             ("reddit_avg_score", "FLOAT DEFAULT 0"),
+            ("score_ci_lower", "INT DEFAULT NULL"),
+            ("score_ci_upper", "INT DEFAULT NULL"),
         ]
         for col_name, col_def in _new_columns:
             _add_column_if_not_exists(conn, "aso_keywords", col_name, col_def)
+
+        # aso_agents 表增量列
+        _agent_new_columns = [
+            ("auth_type", "ENUM('x_api_key','bearer') NOT NULL DEFAULT 'x_api_key' AFTER `version`"),
+        ]
+        for col_name, col_def in _agent_new_columns:
+            _add_column_if_not_exists(conn, "aso_agents", col_name, col_def)
+
+        # v4: aso_keywords 新增 6 列
+        _v4_keyword_columns = [
+            ("search_volume_tier", "TINYINT DEFAULT 0"),
+            ("trends_avg_interest", "FLOAT DEFAULT 0"),
+            ("trends_slope", "FLOAT DEFAULT 0"),
+            ("trends_slope_latest", "FLOAT DEFAULT 0"),
+            ("commercial_value_score", "INT DEFAULT 0"),
+            ("long_tail_score", "INT DEFAULT 0"),
+        ]
+        for col_name, col_def in _v4_keyword_columns:
+            _add_column_if_not_exists(conn, "aso_keywords", col_name, col_def)
+
+        # v4: aso_seeds 增加 category 列
+        _add_column_if_not_exists(
+            conn, "aso_seeds", "category", "VARCHAR(32) DEFAULT NULL AFTER `source`"
+        )
 
         bootstrap_default_seeds_if_empty()
     except Exception as exc:
@@ -347,6 +453,8 @@ def update_job(
     error: str | None = None,
 ) -> None:
     """更新任务状态；status 为 done 或 failed 时写入 finished_at。"""
+    if status not in ("running", "done", "failed"):
+        raise ValueError(f"不允许的 status 值: {status!r}")
     set_parts: list[str] = ["status=%s"]
     params: list[Any] = [status]
     if total is not None:
@@ -391,10 +499,14 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
       blue_ocean_label, scanned_at, scan_batch_id,
       gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
       gplay_top_installs_num, gplay_avg_rating, cross_platform,
-      trends_rising, trends_rising_count, reddit_post_count, reddit_avg_score
+      trends_rising, trends_rising_count, reddit_post_count, reddit_avg_score,
+      score_ci_lower, score_ci_upper,
+      search_volume_tier, trends_avg_interest, trends_slope,
+      trends_slope_latest, commercial_value_score, long_tail_score
     ) VALUES (
       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+      %s, %s, %s, %s, %s, %s
     )
     """
     tuples: list[tuple] = []
@@ -431,6 +543,14 @@ def insert_keywords(rows: list[dict], batch_id: str, country: str = "us") -> Non
                 int(r.get("trends_rising_count") or 0),
                 int(r.get("reddit_post_count") or 0),
                 float(r.get("reddit_avg_score") or 0),
+                r.get("score_ci_lower"),
+                r.get("score_ci_upper"),
+                int(r.get("search_volume_tier") or 0),
+                float(r.get("trends_avg_interest") or 0),
+                float(r.get("trends_slope") or 0),
+                float(r.get("trends_slope_latest") or 0),
+                int(r.get("commercial_value_score") or 0),
+                int(r.get("long_tail_score") or 0),
             )
         )
 
@@ -475,11 +595,14 @@ def get_top_keywords(
     countries: list[str] | None = None,
     cross_platform: bool | None = None,
     trends_only: bool | None = None,
+    volume_tier: int | None = None,
 ) -> list[dict]:
     """
     按时间窗口与可选标签、可选国家列表筛选，按 blue_ocean_score 降序返回关键词摘要。
+    同一 (keyword, country) 只保留最高分那条，避免跨批次/跨种子重复。
     countries 为 None 时不过滤国家；传入时仅保留 country IN (...) 的行。
     cross_platform=True 时仅返回双平台词；trends_only=True 时仅返回 Trends 上升词。
+    volume_tier 不为 None 时仅返回 search_volume_tier = volume_tier 的行。
     limit 最大 200。
     """
     limit = min(max(limit, 1), 200)
@@ -506,8 +629,12 @@ def get_top_keywords(
                 where_extra += " AND cross_platform = 1"
             if trends_only is True:
                 where_extra += " AND trends_rising = 1"
+            if volume_tier is not None:
+                where_extra += " AND search_volume_tier = %s"
+                params.append(volume_tier)
             params.append(limit)
 
+            # 按 (keyword, country) 去重，保留 blue_ocean_score 最高的一条
             sql = f"""
                     SELECT keyword, country, blue_ocean_score, blue_ocean_label, blue_ocean_flags,
                            top_reviews, concentration, avg_update_age_months,
@@ -515,10 +642,18 @@ def get_top_keywords(
                            gplay_autocomplete_rank, gplay_top_reviews, gplay_top_installs,
                            gplay_top_installs_num, gplay_avg_rating, cross_platform,
                            trends_rising, trends_rising_count,
-                           reddit_post_count, reddit_avg_score
-                    FROM aso_keywords
-                    WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
-                      {where_extra}
+                           reddit_post_count, reddit_avg_score,
+                           search_volume_tier, commercial_value_score, long_tail_score
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY keyword, country
+                            ORDER BY blue_ocean_score DESC, scanned_at DESC
+                        ) AS rn
+                        FROM aso_keywords
+                        WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                          {where_extra}
+                    ) t
+                    WHERE rn = 1
                     ORDER BY blue_ocean_score DESC
                     LIMIT %s
                     """
@@ -633,7 +768,7 @@ def get_seed_performance_by_batch(batch_id: str) -> list[dict]:
                   COUNT(*) AS keyword_count,
                   AVG(blue_ocean_score) AS avg_blue_ocean_score,
                   MAX(blue_ocean_score) AS max_blue_ocean_score,
-                  SUM(CASE WHEN blue_ocean_score >= 60 THEN 1 ELSE 0 END) AS strong_count,
+                  SUM(CASE WHEN blue_ocean_score >= 55 THEN 1 ELSE 0 END) AS strong_count,
                   AVG(CASE WHEN cross_platform = 1 THEN 1.0 ELSE 0 END) AS cross_platform_ratio,
                   AVG(CASE WHEN trends_rising = 1 THEN 1.0 ELSE 0 END) AS trends_ratio
                 FROM aso_keywords
@@ -769,6 +904,7 @@ def max_seed_generation() -> int:
 
 
 def get_top_keywords_for_batch(batch_id: str, limit: int) -> list[dict]:
+    """按批次获取高分关键词，同一 keyword 只保留最高分那条。"""
     conn = None
     try:
         conn = _get_connection()
@@ -776,9 +912,17 @@ def get_top_keywords_for_batch(batch_id: str, limit: int) -> list[dict]:
             cur.execute(
                 """
                 SELECT keyword, blue_ocean_score, seed, blue_ocean_flags,
-                       cross_platform, trends_rising
-                FROM aso_keywords
-                WHERE scan_batch_id = %s
+                       cross_platform, trends_rising,
+                       search_volume_tier, trends_slope
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY keyword
+                        ORDER BY blue_ocean_score DESC
+                    ) AS rn
+                    FROM aso_keywords
+                    WHERE scan_batch_id = %s
+                ) t
+                WHERE rn = 1
                 ORDER BY blue_ocean_score DESC
                 LIMIT %s
                 """,
@@ -805,11 +949,22 @@ def get_seeds_status_snapshot() -> dict:
                 """
             )
             counts = {str(r["status"]): int(r["c"]) for r in cur.fetchall()}
+
+            cur.execute(
+                """
+                SELECT category, COUNT(*) AS c FROM aso_seeds
+                WHERE category IS NOT NULL AND category != ''
+                GROUP BY category
+                """
+            )
+            category_counts = {str(r["category"]): int(r["c"]) for r in cur.fetchall()}
+
             cur.execute("SELECT COALESCE(MAX(generation), 0) AS m FROM aso_seeds")
             max_gen = int(cur.fetchone()["m"] or 0)
             cur.execute(
                 """
-                SELECT seed, status, source, generation, created_at, updated_at
+                SELECT seed, status, source, generation, created_at, updated_at,
+                       category
                 FROM aso_seeds
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
@@ -823,6 +978,7 @@ def get_seeds_status_snapshot() -> dict:
                         "seed": r["seed"],
                         "status": r["status"],
                         "source": r["source"],
+                        "category": r.get("category") or "",
                         "generation": int(r["generation"] or 0),
                         "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
                         if hasattr(r["created_at"], "strftime")
@@ -864,11 +1020,140 @@ def get_seeds_status_snapshot() -> dict:
             "pending_count": int(counts.get("pending", 0)),
             "pruned_count": int(counts.get("pruned", 0)),
             "max_generation": max_gen,
+            "category_counts": category_counts,
             "pending_preview": pending_preview,
             "recent_evolution_events": recent_events,
         }
     except Exception as exc:
         logger.error("get_seeds_status_snapshot 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_seeds_list(
+    status: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+    category: str | None = None,
+) -> tuple[list[dict], int]:
+    """
+    分页获取种子列表。
+    返回 (种子列表, 总数)
+    """
+    page = max(1, int(page))
+    limit = min(max(1, int(limit)), 200)
+    offset = (page - 1) * limit
+
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            where_parts: list[str] = []
+            params: list[Any] = []
+            if status:
+                where_parts.append("status = %s")
+                params.append(status)
+            if category:
+                where_parts.append("category = %s")
+                params.append(category)
+            where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+            # 先获取总数
+            count_sql = "SELECT COUNT(*) AS c FROM aso_seeds" + where_clause
+            cur.execute(count_sql, tuple(params))
+            total = int(cur.fetchone()["c"] or 0)
+
+            # 获取列表
+            sql = """
+                SELECT seed, status, source, generation, created_at, updated_at,
+                       category
+                FROM aso_seeds
+                {where}
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+            """.format(where=where_clause)
+            cur.execute(sql, tuple(params) + (limit, offset))
+
+            rows = []
+            for r in cur.fetchall():
+                rows.append({
+                    "seed": r["seed"],
+                    "status": r["status"],
+                    "source": r["source"],
+                    "category": r.get("category") or "",
+                    "generation": int(r["generation"] or 0),
+                    "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r["created_at"], "strftime")
+                        else str(r["created_at"]),
+                    "updated_at": r["updated_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r["updated_at"], "strftime")
+                        else str(r["updated_at"]),
+                })
+            return rows, total
+    except Exception as exc:
+        logger.error("get_seeds_list 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_seed_keywords(
+    seed: str,
+    days: int = 30,
+    limit: int = 100,
+) -> list[dict]:
+    """
+    获取指定种子关联的关键词列表。
+    同一 (keyword, country) 只保留最高分那条，避免跨批次重复。
+    """
+    limit = min(max(1, int(limit)), 200)
+    days = max(1, int(days))
+
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT keyword, country, blue_ocean_score, blue_ocean_label,
+                       top_reviews, concentration, scanned_at,
+                       commercial_value_score, long_tail_score
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY keyword, country
+                        ORDER BY blue_ocean_score DESC, scanned_at DESC
+                    ) AS rn
+                    FROM aso_keywords
+                    WHERE seed = %s
+                      AND scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ) t
+                WHERE rn = 1
+                ORDER BY blue_ocean_score DESC
+                LIMIT %s
+                """,
+                (seed, days, limit),
+            )
+            rows = []
+            for r in cur.fetchall():
+                rows.append({
+                    "keyword": r["keyword"],
+                    "country": r.get("country"),
+                    "blue_ocean_score": int(r["blue_ocean_score"] or 0),
+                    "blue_ocean_label": r.get("blue_ocean_label") or "",
+                    "top_reviews": r.get("top_reviews"),
+                    "concentration": float(r["concentration"]) if r.get("concentration") is not None else None,
+                    "commercial_value_score": int(r.get("commercial_value_score") or 0),
+                    "long_tail_score": int(r.get("long_tail_score") or 0),
+                    "scanned_at": r["scanned_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(r.get("scanned_at"), "strftime")
+                        else str(r.get("scanned_at") or ""),
+                })
+            return rows
+    except Exception as exc:
+        logger.error("get_seed_keywords 失败: %s", exc)
         raise
     finally:
         if conn is not None:
@@ -1156,7 +1441,9 @@ def insert_report(data: dict) -> int:
     """插入一条报告，返回新记录 id。"""
     kw_json = data.get("keywords_json")
     if isinstance(kw_json, (list, dict)):
-        kw_json = json.dumps(kw_json, ensure_ascii=False)
+        kw_json = json.dumps(
+            kw_json, ensure_ascii=False, default=_json_default_for_mysql
+        )
     conn = None
     try:
         conn = _get_connection()
@@ -1219,19 +1506,19 @@ def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
                     MAX(scanned_at)            AS last_seen
                 FROM aso_keywords
                 WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-                  AND blue_ocean_score >= 60
+                  AND blue_ocean_score >= 55
                 GROUP BY keyword
                 ORDER BY peak_score DESC
                 LIMIT 100
                 """
             )
-            top_keywords = [dict(r) for r in cur.fetchall()]
+            top_keywords = [_mysql_row_json_safe(dict(r)) for r in cur.fetchall()]
 
             cur.execute(
                 """
                 SELECT DISTINCT keyword FROM aso_keywords
                 WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-                  AND blue_ocean_score >= 60
+                  AND blue_ocean_score >= 55
                   AND keyword NOT IN (
                       SELECT DISTINCT keyword FROM aso_keywords
                       WHERE scanned_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
@@ -1250,7 +1537,7 @@ def get_keyword_snapshot_for_report() -> tuple[list[dict], list[str]]:
 
 
 def get_recent_score_delta_sum(days: int = 7) -> float:
-    """近 N 天内各关键词 blue_ocean_score 变化绝对值之和。"""
+    """近 N 天内各关键词 blue_ocean_score 变化绝对值之和。按 (keyword, country) 去重后计算。"""
     conn = None
     try:
         conn = _get_connection()
@@ -1261,10 +1548,18 @@ def get_recent_score_delta_sum(days: int = 7) -> float:
                 FROM (
                     SELECT
                         keyword,
+                        country,
                         blue_ocean_score - LAG(blue_ocean_score)
-                            OVER (PARTITION BY keyword ORDER BY scanned_at) AS score_delta
-                    FROM aso_keywords
-                    WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                            OVER (PARTITION BY keyword, country ORDER BY scanned_at) AS score_delta
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY keyword, country, DATE(scanned_at)
+                            ORDER BY blue_ocean_score DESC
+                        ) AS rn
+                        FROM aso_keywords
+                        WHERE scanned_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                    ) dedup
+                    WHERE rn = 1
                 ) t
                 WHERE score_delta IS NOT NULL
                 """,
@@ -1372,7 +1667,7 @@ def get_all_agents() -> list[dict]:
             cur.execute(
                 """
                 SELECT id, name, base_url, api_key_preview, model, version,
-                       is_active, created_at, updated_at
+                       auth_type, is_active, created_at, updated_at
                 FROM aso_agents ORDER BY id ASC
                 """
             )
@@ -1414,8 +1709,8 @@ def insert_agent(data: dict) -> int:
                 """
                 INSERT INTO aso_agents
                   (name, base_url, api_key_enc, api_key_preview, model, version,
-                   is_active, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                   auth_type, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                 """,
                 (
                     data["name"],
@@ -1424,6 +1719,7 @@ def insert_agent(data: dict) -> int:
                     data["api_key_preview"],
                     data["model"],
                     data.get("version", "2023-06-01"),
+                    data.get("auth_type", "x_api_key"),
                     1 if data.get("is_active", True) else 0,
                 ),
             )
@@ -1440,6 +1736,10 @@ def insert_agent(data: dict) -> int:
 
 def update_agent(agent_id: int, data: dict) -> None:
     """更新智能体，data 中不含 api_key_enc 时不更新密钥。"""
+    _ALLOWED_FIELDS = frozenset({
+        "name", "base_url", "model", "version", "auth_type",
+        "api_key_enc", "api_key_preview", "is_active",
+    })
     set_parts: list[str] = []
     params: list[Any] = []
     for field in ("name", "base_url", "model", "version"):
@@ -1564,6 +1864,88 @@ def get_all_assignments() -> list[dict]:
             return [dict(r) for r in cur.fetchall()]
     except Exception as exc:
         logger.error("get_all_assignments 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# ===================== 贝叶斯先验 CRUD =====================
+
+
+def get_all_priors() -> list[dict]:
+    """读取所有维度的先验/后验状态。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM aso_score_priors ORDER BY dimension")
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_all_priors 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def upsert_prior(
+    dimension: str,
+    alpha: float,
+    beta_param: float,
+    mu: float,
+    sigma_sq: float,
+    n_obs: int,
+) -> None:
+    """插入或更新单维度先验。"""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO aso_score_priors
+                  (dimension, alpha, beta_param, mu, sigma_sq, n_obs, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                  alpha = VALUES(alpha), beta_param = VALUES(beta_param),
+                  mu = VALUES(mu), sigma_sq = VALUES(sigma_sq),
+                  n_obs = VALUES(n_obs), updated_at = VALUES(updated_at)
+                """,
+                (dimension, alpha, beta_param, mu, sigma_sq, n_obs, now),
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.error("upsert_prior 失败: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_batch_label_stats(batch_id: str) -> list[dict]:
+    """获取指定批次中各关键词的标签和各维度原始值，用于后验更新。"""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT blue_ocean_label, blue_ocean_score,
+                       top_reviews, seed_coverage, concentration,
+                       avg_update_age_months, trend_gap, rank_change,
+                       cross_platform, trends_rising, reddit_post_count,
+                       gplay_top_installs_num, autocomplete_rank,
+                       search_volume_tier
+                FROM aso_keywords
+                WHERE scan_batch_id = %s
+                """,
+                (batch_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("get_batch_label_stats 失败: %s", exc)
         raise
     finally:
         if conn is not None:

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ASO 关键词洞察报告</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{
@@ -46,6 +47,8 @@ a{color:#4f8ef7;text-decoration:none}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn-generate{background:#3ecf8e}
 .btn-generate.highlight{background:#f5a623;animation:pulse 1.5s infinite}
+.btn-scan{background:#a78bfa}
+.btn-scan.scanning{background:#f5a623;animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
 
 .alert{
@@ -80,6 +83,11 @@ a{color:#4f8ef7;text-decoration:none}
 .card--ocean .card-value{color:#3ecf8e}
 .card--new .card-value{color:#4f8ef7}
 .card--version .card-value{color:#a78bfa}
+.card--cv .card-value{color:#f5a623}
+.card--lt .card-value{color:#3ecf8e}
+.card--cv,.card--lt{cursor:default}
+.card{cursor:pointer;transition:transform .15s,box-shadow .15s}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
 
 .section{margin-bottom:28px}
 .section-title{
@@ -192,6 +200,52 @@ tr:hover td{background:rgba(79,142,247,.04)}
   .card-value{font-size:22px}
   .report-box{padding:14px 16px}
 }
+
+/* 弹窗 */
+.modal-overlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.7);z-index:1000;
+  display:none;align-items:center;justify-content:center;
+  padding:20px;
+}
+.modal-overlay.open{display:flex}
+.modal-content{
+  background:#1a1d27;border:1px solid #2d3148;border-radius:12px;
+  width:100%;max-width:600px;max-height:85vh;display:flex;flex-direction:column;
+}
+.modal-content-lg{max-width:800px}
+.modal-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px;border-bottom:1px solid #2d3148;
+}
+.modal-title{font-size:16px;font-weight:600}
+.modal-close{
+  background:none;border:none;color:#8b8fa3;font-size:24px;
+  cursor:pointer;line-height:1;padding:0;
+}
+.modal-close:hover{color:#e1e4eb}
+.modal-body{
+  flex:1;overflow-y:auto;padding:16px 20px;
+}
+.modal-footer{
+  padding:12px 20px;border-top:1px solid #2d3148;
+}
+.modal-pagination{
+  display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#8b8fa3;
+}
+.modal-pagination button{
+  background:#2d3148;border:none;color:#e1e4eb;padding:4px 10px;
+  border-radius:4px;cursor:pointer;font-size:13px;
+}
+.modal-pagination button:disabled{opacity:.5;cursor:not-allowed}
+.modal-kw-item{
+  display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #1e2236;
+}
+.modal-kw-item .kw-score{font-weight:600;min-width:40px}
+.modal-kw-item .kw-name{flex:1}
+.modal-kw-item .kw-meta{font-size:12px;color:#8b8fa3}
+.clickable{cursor:pointer;color:#4f8ef7}
+.clickable:hover{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -202,6 +256,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
     <div class="header-right">
       <span class="header-time" id="lastUpdate"></span>
       <button class="btn" id="btnRefresh" onclick="loadData()" style="display:none">🔄 刷新</button>
+      <button class="btn btn-scan" id="btnScan" onclick="scanManager.startScan()" style="display:none">📡 全盘扫描</button>
       <button class="btn btn-generate" id="btnGenerate" onclick="generateReport()" style="display:none">📝 生成报告</button>
     </div>
   </div>
@@ -218,23 +273,35 @@ tr:hover td{background:rgba(79,142,247,.04)}
   <div id="mainContent" style="display:none">
 
     <div class="cards">
-      <div class="card card--gold">
+      <div class="card card--gold" onclick="openKeywordsModal('gold')">
         <div class="card-icon">💎</div>
         <div class="card-label">金矿词</div>
         <div class="card-value" id="vGold">-</div>
-        <div class="card-desc">peak_score ≥ 80</div>
+        <div class="card-desc">peak_score >= 100</div>
       </div>
-      <div class="card card--ocean">
+      <div class="card card--ocean" onclick="openKeywordsModal('ocean')">
         <div class="card-icon">🟢</div>
         <div class="card-label">蓝海词</div>
         <div class="card-value" id="vOcean">-</div>
-        <div class="card-desc">peak_score 60-79</div>
+        <div class="card-desc">peak_score 70-99</div>
       </div>
-      <div class="card card--new">
+      <div class="card card--new" onclick="openKeywordsModal('new')">
         <div class="card-icon">📈</div>
         <div class="card-label">新增词</div>
         <div class="card-value" id="vNew">-</div>
         <div class="card-desc">7天内首次出现的高分词</div>
+      </div>
+      <div class="card card--cv" style="cursor:default">
+        <div class="card-icon">💰</div>
+        <div class="card-label">平均商业价值</div>
+        <div class="card-value" id="vAvgCV">-</div>
+        <div class="card-desc">所有高分词的平均商业价值评分</div>
+      </div>
+      <div class="card card--lt" style="cursor:default">
+        <div class="card-icon">🎯</div>
+        <div class="card-label">平均长尾潜力</div>
+        <div class="card-value" id="vAvgLT">-</div>
+        <div class="card-desc">所有高分词的平均长尾潜力评分</div>
       </div>
       <div class="card card--version">
         <div class="card-icon">🔄</div>
@@ -260,6 +327,22 @@ tr:hover td{background:rgba(79,142,247,.04)}
       <div id="detailReport"></div>
     </div>
 
+  </div>
+</div>
+
+<!-- 弹窗：关键词列表 -->
+<div class="modal-overlay" id="keywordsModal" onclick="closeKeywordsModal(event)">
+  <div class="modal-content modal-content-lg" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="keywordsModalTitle">关键词列表</div>
+      <button class="modal-close" onclick="closeKeywordsModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="keywordsModalBody">
+      <div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>
+    </div>
+    <div class="modal-footer">
+      <div class="modal-pagination" id="keywordsPagination"></div>
+    </div>
   </div>
 </div>
 
@@ -352,13 +435,178 @@ tr:hover td{background:rgba(79,142,247,.04)}
   let latestData = null;
   let expandedId = null;
 
+  /* ========== 扫描管理器 ========== */
+  const scanManager = {
+    currentBatchId: null,
+    pollInterval: null,
+    pollCount: 0,
+    MAX_POLLS: 3600, // 最多轮询 1 小时（每秒一次）
+
+    async startScan() {
+      // 防重：如果已经在扫描中，直接返回
+      if (this.currentBatchId) {
+        showWarning('扫描正在进行中，请稍候...');
+        return;
+      }
+
+      const btn = $('btnScan');
+      btn.disabled = true;
+      btn.classList.add('scanning');
+      btn.textContent = '⏳ 扫描中...';
+      hideError();
+      hideWarning();
+
+      try {
+        // 发起后台扫描任务
+        const resp = await fetch('/scan/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'full' })
+        });
+
+        if (resp.status === 401) {
+          window.top.location.href = '/static/index.html';
+          return;
+        }
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          showError('启动扫描失败: ' + (err.detail || 'HTTP ' + resp.status));
+          btn.disabled = false;
+          btn.classList.remove('scanning');
+          btn.textContent = '📡 全盘扫描';
+          return;
+        }
+
+        const data = await resp.json();
+        this.currentBatchId = data.batch_id;
+        this.pollCount = 0;
+        showSuccess('✅ 扫描任务已启动，正在后台执行...');
+
+        // 开始轮询状态
+        this.pollStatus();
+
+      } catch (err) {
+        showError('启动扫描失败: ' + err.message);
+        btn.disabled = false;
+        btn.classList.remove('scanning');
+        btn.textContent = '📡 全盘扫描';
+      }
+    },
+
+    pollStatus() {
+      // 防止重复轮询
+      if (this.pollInterval) {
+        clearInterval(this.pollInterval);
+      }
+
+      this.pollInterval = setInterval(async () => {
+        if (!this.currentBatchId) {
+          clearInterval(this.pollInterval);
+          this.pollInterval = null;
+          return;
+        }
+
+        this.pollCount++;
+
+        // 熔断机制：超过最大轮询次数则停止
+        if (this.pollCount > this.MAX_POLLS) {
+          clearInterval(this.pollInterval);
+          this.pollInterval = null;
+          showError('⚠️ 扫描超时（1小时未完成），请稍后查询状态');
+          this.handleScanFailure();
+          return;
+        }
+
+        try {
+          const resp = await fetch(`/scan/status/${this.currentBatchId}`);
+
+          if (resp.status === 401) {
+            window.top.location.href = '/static/index.html';
+            return;
+          }
+
+          if (!resp.ok) {
+            if (resp.status === 404) {
+              showError('任务不存在或已过期');
+              this.handleScanFailure();
+            } else {
+              // 继续轮询，可能是临时网络问题
+            }
+            return;
+          }
+
+          const jobData = await resp.json();
+          const status = jobData.status;
+
+          if (status === 'done') {
+            // 扫描完成
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+            this.handleScanSuccess(jobData);
+
+          } else if (status === 'failed') {
+            // 扫描失败
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+            const error = jobData.error || '未知错误';
+            showError('❌ 扫描失败: ' + error);
+            this.handleScanFailure();
+
+          } else if (status === 'running') {
+            // 继续运行，更新 UI
+            const btn = $('btnScan');
+            const progress = jobData.keywords_found || 0;
+            btn.textContent = `⏳ 扫描中... (${progress} 词)`;
+          }
+
+        } catch (err) {
+          // 网络错误不应中断轮询，继续重试
+          console.warn('轮询状态失败:', err.message);
+        }
+      }, 1000); // 每秒轮询一次
+    },
+
+    handleScanSuccess(jobData) {
+      const btn = $('btnScan');
+      btn.disabled = false;
+      btn.classList.remove('scanning');
+      btn.textContent = '📡 全盘扫描';
+
+      const kwCount = jobData.keywords_found || 0;
+      showSuccess(`✅ 扫描完成！发现 ${kwCount} 个关键词`);
+
+      this.currentBatchId = null;
+      this.pollCount = 0;
+
+      // 自动刷新数据和检查报告生成条件
+      setTimeout(() => {
+        loadData();
+      }, 1000);
+    },
+
+    handleScanFailure() {
+      const btn = $('btnScan');
+      btn.disabled = false;
+      btn.classList.remove('scanning');
+      btn.textContent = '📡 全盘扫描';
+
+      this.currentBatchId = null;
+      this.pollCount = 0;
+    }
+  };
+
   /* ========== 渲染 ========== */
+  let kwStatsCache = { avg_cv: 0, avg_lt: 0 };
+
   function renderCards(latest) {
     if (!latest || !latest.id) {
       $('vGold').textContent = '-';
       $('vOcean').textContent = '-';
       $('vNew').textContent = '-';
       $('vVersion').textContent = '-';
+      $('vAvgCV').textContent = '-';
+      $('vAvgLT').textContent = '-';
       return;
     }
     const goldCount = latest.new_gold_count || 0;
@@ -367,6 +615,30 @@ tr:hover td{background:rgba(79,142,247,.04)}
     $('vOcean').textContent = (kwCount - goldCount) + ' 个';
     $('vNew').textContent = goldCount + ' 个';
     $('vVersion').textContent = '第 ' + (latest.prompt_version || 1) + ' 版';
+    $('vAvgCV').textContent = kwStatsCache.avg_cv > 0 ? kwStatsCache.avg_cv.toFixed(1) : '-';
+    $('vAvgLT').textContent = kwStatsCache.avg_lt > 0 ? kwStatsCache.avg_lt.toFixed(1) : '-';
+  }
+
+  /* 加载关键词统计数据 */
+  async function loadKeywordStats() {
+    try {
+      const resp = await fetch('/analysis/top?limit=100&days=30');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const keywords = data.keywords || [];
+      if (keywords.length === 0) return;
+      let sumCv = 0, sumLt = 0, count = keywords.length;
+      for (const kw of keywords) {
+        sumCv += kw.commercial_value_score || 0;
+        sumLt += kw.long_tail_score || 0;
+      }
+      kwStatsCache.avg_cv = count > 0 ? sumCv / count : 0;
+      kwStatsCache.avg_lt = count > 0 ? sumLt / count : 0;
+      $('vAvgCV').textContent = kwStatsCache.avg_cv.toFixed(1);
+      $('vAvgLT').textContent = kwStatsCache.avg_lt.toFixed(1);
+    } catch (err) {
+      // 静默降级，不阻断主流程
+    }
   }
 
   function renderLatestReport(latest) {
@@ -494,7 +766,7 @@ tr:hover td{background:rgba(79,142,247,.04)}
       ]);
 
       if (latestResp.status === 401 || historyResp.status === 401) {
-        window.top.location.href = '/static/index.html';
+        // 只读接口不应返回 401（后端已开放），若收到则静默处理
         return;
       }
 
@@ -508,13 +780,15 @@ tr:hover td{background:rgba(79,142,247,.04)}
       renderCards(latest);
       renderLatestReport(latest);
       renderHistory(window._historyItems);
+      loadKeywordStats();
 
       if (latest && latest.created_at) {
         $('lastUpdate').textContent = '上次更新: ' + fmtShort(latest.created_at) + ' UTC';
       }
 
       $('btnRefresh').style.display = 'inline-block';
-      $('btnGenerate').style.display = 'inline-block';
+      if (isLoggedIn) $('btnGenerate').style.display = 'inline-block';
+      if (isLoggedIn) $('btnScan').style.display = 'inline-block';
       $('mainContent').style.display = 'block';
 
       if (check && check.should_generate) {
@@ -531,14 +805,92 @@ tr:hover td{background:rgba(79,142,247,.04)}
     }
   }
 
+  /* ========== 弹窗功能 ========== */
+  let currentKwType = 'gold';
+  let currentKwPage = 1;
+
+  function openKeywordsModal(type) {
+    currentKwType = type;
+    currentKwPage = 1;
+    const titles = { gold: '💎 金矿词', ocean: '🟢 蓝海词', new: '📈 新增词' };
+    $('keywordsModalTitle').textContent = titles[type] || '关键词列表';
+    $('keywordsModal').classList.add('open');
+    loadKeywordsPage(1);
+  }
+
+  function closeKeywordsModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    $('keywordsModal').classList.remove('open');
+  }
+
+  async function loadKeywordsPage(page) {
+    currentKwPage = page;
+    const body = $('keywordsModalBody');
+    body.innerHTML = '<div class="loading-overlay" style="display:block"><div class="spinner"></div><div>加载中...</div></div>';
+
+    try {
+      // 映射类型到 label
+      const labelMap = { gold: '💎 金矿', ocean: '🟢 蓝海', new: null };
+      const label = labelMap[currentKwType] || '';
+
+      const url = '/analysis/top?label=' + encodeURIComponent(label) + '&limit=100&days=30';
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+
+      const keywords = data.keywords || [];
+
+      // 对于 new 类型，需要过滤 7 天内新出现的
+      let filtered = keywords;
+      if (currentKwType === 'new') {
+        // 这里简化处理：直接显示所有，由后端或前端进一步筛选
+        // 实际上 /analysis/top 不支持 new 筛选，我们显示全部
+      }
+
+      renderKeywordsList(filtered);
+
+    } catch (err) {
+      body.innerHTML = '<div class="empty">加载失败: ' + err.message + '</div>';
+    }
+  }
+
+  function renderKeywordsList(list) {
+    const body = $('keywordsModalBody');
+    if (!list || list.length === 0) {
+      body.innerHTML = '<div class="empty">暂无关键词</div>';
+      return;
+    }
+    let html = '';
+    for (const kw of list) {
+      const score = kw.blue_ocean_score || 0;
+      const scoreColor = score >= 100 ? '#f5a623' : (score >= 70 ? '#3ecf8e' : '#8b8fa3');
+      html += '<div class="modal-kw-item">' +
+        '<div class="kw-score" style="color:' + scoreColor + '">' + score + '</div>' +
+        '<div class="kw-name"><span class="clickable">' + escapeHtml(kw.keyword) + '</span></div>' +
+        '<div class="kw-meta">' + (kw.country || '-') + ' | ' + (kw.top_reviews || 0) + ' 评论</div></div>';
+    }
+    body.innerHTML = html;
+  }
+
   window.loadData = loadData;
   window.generateReport = generateReport;
   window.viewReport = viewReport;
+  window.openKeywordsModal = openKeywordsModal;
+  window.closeKeywordsModal = closeKeywordsModal;
+  window.scanManager = scanManager;
 
+  /* 检查登录状态，决定是否显示写操作按钮 */
+  let isLoggedIn = false;
   fetch('/auth/me').then(r => {
-    if (!r.ok) { window.top.location.href = '/static/index.html'; return; }
+    if (r.ok) {
+      isLoggedIn = true;
+      if (isLoggedIn) $('btnScan').style.display = 'inline-block';
+      if (isLoggedIn) $('btnGenerate').style.display = 'inline-block';
+    }
     loadData();
-  }).catch(() => { window.top.location.href = '/static/index.html'; });
+  }).catch(() => {
+    loadData();
+  });
 
 })();
 </script>
